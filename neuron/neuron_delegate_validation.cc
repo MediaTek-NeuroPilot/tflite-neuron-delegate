@@ -541,7 +541,7 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
              "Positions type should be one of kTfLiteInt32", &val_ctx);
       Expect(positions.dims->size != 0,
              NeuronValidationFailureType::kUnsupportedOperandRank,
-             "0-dimension args are not supported by NNAPI.", &val_ctx);
+             "0-dimension args are not supported by Neuron.", &val_ctx);
     } break;
     case kTfLiteBuiltinSplit: {
       ExpectOpVersion(version, 3, &val_ctx);

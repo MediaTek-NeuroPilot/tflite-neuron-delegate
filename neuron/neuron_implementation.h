@@ -192,8 +192,8 @@ struct NeuronApi {
 
 /**
  * Load the Neuron implementation from the shared libraries.
- * The NnApi structure is filled with all the pointers. If one function doesn't
- * exist, a null pointer is stored.
+ * The NeuronApi structure is filled with all the pointers. If one function
+ * doesn't exist, a null pointer is stored.
  */
 const NeuronApi* NeuronApiImplementation();
 

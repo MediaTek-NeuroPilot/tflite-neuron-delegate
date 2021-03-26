@@ -42,7 +42,7 @@ void* LoadFunction(void* handle, const char* name, bool optional) {
   }
   void* fn = dlsym(handle, name);
   if (fn == nullptr && !optional) {
-    NEURONAPI_LOG("nnapi error: unable to open function %s", name);
+    NEURONAPI_LOG("neuron error: unable to open function %s", name);
   }
   return fn;
 }
@@ -147,10 +147,6 @@ const NeuronApi LoadNeuronApi() {
     }
   }
 #else
-  // Mock ASharedMemory_create only if libneuralnetworks.so was successfully
-  // loaded. This ensures identical behaviour on platforms which use this
-  // implementation, but don't have libneuralnetworks.so library, and
-  // platforms which use nnapi_implementation_disabled.cc stub.
   if (libneuron_adapter != nullptr) {
     neuron_api.ASharedMemory_create = ASharedMemory_create;
   }
