@@ -22,14 +22,15 @@
 
 #include "neuron/neuron_delegate_validation.h"
 
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "neuron/neuron_delegate_utils.h"
 #include "tensorflow/lite/builtin_ops.h"
 #include "tensorflow/lite/c/builtin_op_data.h"
 #include "tensorflow/lite/context_util.h"
-#include "neuron/neuron_delegate_utils.h"
 #include "tensorflow/lite/kernels/kernel_util.h"
 #include "tensorflow/lite/minimal_logging.h"
 #include "tensorflow/lite/util.h"

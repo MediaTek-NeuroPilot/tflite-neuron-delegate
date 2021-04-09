@@ -4,10 +4,10 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
 http_archive(
     name = "org_tensorflow",
-    sha256 = "d22d64a6de3f2970ca3daba241912721c94c7c7aa0e6d2026cd43eb6b1ce93d2",
-    strip_prefix = "tensorflow-9f069e02551098bb05e7cf49ddc950411bebd4e8",
+    sha256 = "b91ec194ddf6c4a5a2f9d1db4af4daab0b187ff691e6f88142413d2c7e77a3bb",
+    strip_prefix = "tensorflow-2.4.1",
     urls = [
-        "https://github.com/tensorflow/tensorflow/archive/9f069e02551098bb05e7cf49ddc950411bebd4e8.zip",
+        "https://github.com/tensorflow/tensorflow/archive/v2.4.1.zip",
     ],
 )
 
@@ -123,4 +123,4 @@ py_repositories()
 # Specify the minimum required bazel version.
 load("@org_tensorflow//tensorflow:version_check.bzl", "check_bazel_version_at_least")
 
-check_bazel_version_at_least("0.24.1")
+check_bazel_version_at_least("3.1.0")

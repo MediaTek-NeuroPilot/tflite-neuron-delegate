@@ -31,6 +31,7 @@
 #include <cstdlib>
 
 #ifdef __ANDROID__
+#include <android/dlext.h>
 #include <sys/system_properties.h>
 #endif  // __ANDROID__
 
@@ -80,6 +81,7 @@ const NeuronApi LoadNeuronApi() {
   neuron_api.neuron_sdk_version = 0;
 
   void* libneuron_adapter = nullptr;
+#ifndef __ANDROID__
   libneuron_adapter =
       dlopen("libneuron_adapter.mtk.so", RTLD_LAZY | RTLD_LOCAL);
   if (libneuron_adapter == nullptr) {
@@ -90,6 +92,18 @@ const NeuronApi LoadNeuronApi() {
       NEURONAPI_LOG("NeuronApi error: unable to open library %s/%s",
                     "libneuron_adapter.so", "libneuronusdk_adapter.mtk.so");
     }
+#else
+  libneuron_adapter =
+      dlopen("libneuron_adapter.mtk.so", RTLD_LAZY | RTLD_LOCAL);
+  if (libneuron_adapter == nullptr) {
+    // Try to dlopen Neuron universal SDK
+    libneuron_adapter =
+        dlopen("libneuronusdk_adapter.mtk.so", RTLD_LAZY | RTLD_LOCAL);
+    if (libneuron_adapter == nullptr) {
+      NEURONAPI_LOG("NeuronApi error: unable to open library %s/%s",
+                    "libneuron_adapter.so", "libneuronusdk_adapter.mtk.so");
+    }
+#endif
   }
   neuron_api.neuron_exists = libneuron_adapter != nullptr;
 

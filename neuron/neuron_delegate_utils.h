@@ -23,13 +23,12 @@
 #ifndef TENSORFLOW_LITE_EXPERIMENTAL_DELEGATES_NEURON_NEURON_UTILS_H_
 #define TENSORFLOW_LITE_EXPERIMENTAL_DELEGATES_NEURON_NEURON_UTILS_H_
 
-#include "neuron/neuron_types.h"
-
-#include <string>
-
 #include <dlfcn.h>
 #include <fcntl.h>
 
+#include <string>
+
+#include "neuron/neuron_types.h"
 #include "tensorflow/lite/c/common.h"
 #include "tensorflow/lite/context_util.h"
 
@@ -135,8 +134,7 @@ inline int acquirePerf() {
   return hdl;
 }
 
-inline void releasePerf(int handle) {
-}
+inline void releasePerf(int handle) {}
 
 }  // namespace neuron
 }  // namespace tflite

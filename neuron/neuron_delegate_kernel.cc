@@ -22,16 +22,16 @@
 
 #include "neuron/neuron_delegate_kernel.h"
 
-#include "tensorflow/lite/builtin_ops.h"
-#include "tensorflow/lite/c/builtin_op_data.h"
-#include "tensorflow/lite/c/common.h"
-#include "tensorflow/lite/context_util.h"
-#include "tensorflow/lite/core/api/profiler.h"
 #include "neuron/neuron_delegate_builder.h"
 #include "neuron/neuron_delegate_utils.h"
 #include "neuron/neuron_delegate_validation.h"
 #include "neuron/neuron_implementation.h"
 #include "neuron/neuron_types.h"
+#include "tensorflow/lite/builtin_ops.h"
+#include "tensorflow/lite/c/builtin_op_data.h"
+#include "tensorflow/lite/c/common.h"
+#include "tensorflow/lite/context_util.h"
+#include "tensorflow/lite/core/api/profiler.h"
 #include "tensorflow/lite/minimal_logging.h"
 #include "tensorflow/lite/util.h"
 

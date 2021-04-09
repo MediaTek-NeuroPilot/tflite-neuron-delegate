@@ -23,18 +23,17 @@
 #ifndef TENSORFLOW_LITE_EXPERIMENTAL_DELEGATES_NEURON_NEURON_KERNEL_H_
 #define TENSORFLOW_LITE_EXPERIMENTAL_DELEGATES_NEURON_NEURON_KERNEL_H_
 
-#include "neuron/APUWareUtilsApi.h"
-#include "neuron/neuron_delegate.h"
-#include "neuron/neuron_delegate_builder.h"
-#include "neuron/neuron_delegate_utils.h"
-#include "neuron/neuron_delegate_validation.h"
-#include "neuron/neuron_implementation.h"
-
 #include <map>
 #include <memory>
 #include <tuple>
 #include <vector>
 
+#include "neuron/APUWareUtilsApi.h"
+#include "neuron/neuron_delegate.h"
+#include "neuron/neuron_delegate_utils.h"
+#include "neuron/neuron_delegate_validation.h"
+#include "neuron/neuron_implementation.h"
+#include "neuron_delegate_builder.h"
 #include "tensorflow/lite/delegates/utils/simple_delegate.h"
 
 namespace tflite {

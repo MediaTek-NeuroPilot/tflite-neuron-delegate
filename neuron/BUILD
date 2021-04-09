@@ -3,7 +3,6 @@ load("@org_tensorflow//tensorflow/lite:build_def.bzl", "tflite_linkopts")
 load("@org_tensorflow//tensorflow/lite/tools/evaluation/tasks:build_def.bzl", "task_linkopts")
 load("@org_tensorflow//tensorflow/lite:special_rules.bzl", "tflite_portable_test_suite")
 
-
 package(
     default_visibility = [
         "//visibility:public",
@@ -57,8 +56,8 @@ cc_library(
         "neuron_implementation",
         "@org_tensorflow//tensorflow/lite/c:common",
         "@org_tensorflow//tensorflow/lite/core/api",
-        "@org_tensorflow//tensorflow/lite/kernels:kernel_util",
         "@org_tensorflow//tensorflow/lite/delegates/utils:simple_delegate",
+        "@org_tensorflow//tensorflow/lite/kernels:kernel_util",
     ],
 )
 
@@ -74,8 +73,8 @@ cc_library(
         "nobuilder",
     ],
     deps = [
-        "neuronapi_lib",
         "neuron_delegate_utils",
+        "neuronapi_lib",
         "@org_tensorflow//tensorflow/lite/c:common",
         "@org_tensorflow//tensorflow/lite/core/api",
         "@org_tensorflow//tensorflow/lite/kernels:builtin_ops",
@@ -88,8 +87,8 @@ cc_library(
         "neuron_delegate.cc",
     ],
     hdrs = [
-        "neuron_delegate.h",
         "APUWareUtilsApi.h",
+        "neuron_delegate.h",
     ],
     deps = [
         "neuron_delegate_kernel",
@@ -114,7 +113,6 @@ cc_library(
 cc_binary(
     name = "benchmark_model_plus_neuron_delegate",
     copts = tflite_copts(),
-    #linkopts = task_linkopts(),
     deps = [
         ":neuron_delegate_provider",
         "@org_tensorflow//tensorflow/lite/tools/benchmark:benchmark_model_main",
@@ -124,7 +122,6 @@ cc_binary(
 cc_binary(
     name = "inference_diff_plus_neuron_delegate",
     copts = tflite_copts(),
-    #linkopts = task_linkopts(),
     deps = [
         ":neuron_delegate_provider",
         "@org_tensorflow//tensorflow/lite/tools/evaluation/tasks:task_executor_main",
@@ -135,7 +132,6 @@ cc_binary(
 cc_binary(
     name = "imagenet_classification_eval_plus_neuron_delegate",
     copts = tflite_copts(),
-    #linkopts = task_linkopts(),
     deps = [
         ":neuron_delegate_provider",
         "@org_tensorflow//tensorflow/lite/tools/evaluation/tasks:task_executor_main",
@@ -146,7 +142,6 @@ cc_binary(
 cc_binary(
     name = "coco_object_detection_eval_plus_neuron_delegate",
     copts = tflite_copts(),
-    #linkopts = task_linkopts(),
     deps = [
         ":neuron_delegate_provider",
         "@org_tensorflow//tensorflow/lite/tools/evaluation/tasks:task_executor_main",

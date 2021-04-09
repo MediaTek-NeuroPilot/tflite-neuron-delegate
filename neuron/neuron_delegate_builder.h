@@ -28,11 +28,11 @@
 #include <tuple>
 #include <vector>
 
-#include "tensorflow/lite/c/builtin_op_data.h"
 #include "neuron/neuron_delegate_kernel.h"
 #include "neuron/neuron_delegate_utils.h"
 #include "neuron/neuron_delegate_validation.h"
 #include "neuron/neuron_implementation.h"
+#include "tensorflow/lite/c/builtin_op_data.h"
 #include "tensorflow/lite/kernels/kernel_util.h"
 
 namespace tflite {
