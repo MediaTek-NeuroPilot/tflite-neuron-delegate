@@ -1,0 +1,13 @@
+diff --git a/tensorflow/lite/delegates/gpu/cl/serialization.fbs b/tensorflow/lite/delegates/gpu/cl/serialization.fbs
+index 67bd587162e..e01fe2481f6 100644
+--- a/tensorflow/lite/delegates/gpu/cl/serialization.fbs
++++ b/tensorflow/lite/delegates/gpu/cl/serialization.fbs
+@@ -12,7 +12,7 @@
+ // See the License for the specific language governing permissions and
+ // limitations under the License.
+ 
+-include "tensorflow/lite/delegates/gpu/common/task/serialization_base.fbs";
++include "external/org_tensorflow/tensorflow/lite/delegates/gpu/common/task/serialization_base.fbs";
+ 
+ namespace tflite.gpu.cl.data;
+ 
