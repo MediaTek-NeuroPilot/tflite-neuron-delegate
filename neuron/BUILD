@@ -163,7 +163,7 @@ cc_binary(
     }),
     deps = [
         ":neuron_delegate_provider",
-        "@org_tensorflow//tensorflow/lite/examples/label_image",
+        "@org_tensorflow//tensorflow/lite/examples/label_image:label_image",
         "@org_tensorflow//tensorflow/lite/examples/label_image:bitmap_helpers",
         "@org_tensorflow//tensorflow/lite/tools/delegates:tflite_execution_providers",
     ],
