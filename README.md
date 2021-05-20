@@ -9,6 +9,7 @@ bazel build --config android_arm64 -c opt //neuron:benchmark_model_plus_neuron_d
 bazel build --config android_arm64 -c opt //neuron:coco_object_detection_eval_plus_neuron_delegate
 bazel build --config android_arm64 -c opt //neuron:imagenet_classification_eval_plus_neuron_delegate
 bazel build --config android_arm64 -c opt //neuron:inference_diff_plus_neuron_delegate
+bazel build --config android_arm64 -c opt //neuron:label_image_plus_neuron_delegate
 ```
 or
 ```

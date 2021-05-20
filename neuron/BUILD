@@ -47,8 +47,8 @@ cc_library(
         "neuron_delegate_kernel.cc",
     ],
     hdrs = [
-        "neuron_delegate_kernel.h",
         "APUWareUtilsApi.h",
+        "neuron_delegate_kernel.h",
     ],
     deps = [
         "neuron_delegate_utils",
@@ -146,6 +146,26 @@ cc_binary(
         ":neuron_delegate_provider",
         "@org_tensorflow//tensorflow/lite/tools/evaluation/tasks:task_executor_main",
         "@org_tensorflow//tensorflow/lite/tools/evaluation/tasks/coco_object_detection:run_eval_lib",
+    ],
+)
+
+cc_binary(
+    name = "label_image_plus_neuron_delegate",
+    srcs = ["@org_tensorflow//tensorflow/lite/examples/label_image:label_image.cc"],
+    copts = tflite_copts(),
+    linkopts = tflite_linkopts() + select({
+        "@org_tensorflow//tensorflow:android": [
+            "-pie",  # Android 5.0 and later supports only PIE
+            "-lm",  # some builtin ops, e.g., tanh, need -lm
+            "-Wl,-rpath=/data/local/tmp",  # for hexagon delegate
+        ],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":neuron_delegate_provider",
+        "@org_tensorflow//tensorflow/lite/examples/label_image",
+        "@org_tensorflow//tensorflow/lite/examples/label_image:bitmap_helpers",
+        "@org_tensorflow//tensorflow/lite/tools/delegates:tflite_execution_providers",
     ],
 )
 
