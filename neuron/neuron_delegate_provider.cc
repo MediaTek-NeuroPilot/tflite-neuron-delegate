@@ -1,24 +1,24 @@
 /*
-* Copyright (C) 2021 MediaTek Inc., this file is modified on 02/26/2021
-* by MediaTek Inc. based on MIT License .
-* Permission is hereby granted, free of charge, to any person obtaining a copy
-* of this software and associated documentation files (the ""Software""), to
-* deal in the Software without restriction, including without limitation the
-* rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
-* sell copies of the Software, and to permit persons to whom the Software is
-* furnished to do so, subject to the following conditions:
-*
-* The above copyright notice and this permission notice shall be included in all
-* copies or substantial portions of the Software.
-*
-* THE SOFTWARE IS PROVIDED ""AS IS"", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-* SOFTWARE.
-*/
+ * Copyright (C) 2021 MediaTek Inc., this file is modified on 02/26/2021
+ * by MediaTek Inc. based on MIT License .
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the ""Software""), to
+ * deal in the Software without restriction, including without limitation the
+ * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED ""AS IS"", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
 
 #include <string>
 
@@ -36,6 +36,8 @@ class NeuronDelegateProvider : public DelegateProvider {
                              ToolParam::Create<std::string>(""));
     default_params_.AddParam("neuron_allow_fp16",
                              ToolParam::Create<bool>(false));
+    default_params_.AddParam("neuron_optimization_hint",
+                             ToolParam::Create<int32_t>(0));
   }
 
   std::vector<Flag> CreateFlags(ToolParams* params) const final;
@@ -57,7 +59,10 @@ std::vector<Flag> NeuronDelegateProvider::CreateFlags(
           "neuron_execution_preference", params,
           "execution preference for neuron delegate. Should "
           "be one of the following: fast_single_answer, "
-          "sustained_speed, low_power, undefined")};
+          "sustained_speed, low_power, undefined"),
+      CreateFlag<int32_t>("neuron_optimization_hint", params,
+                          "set optimization hint. Currently, bit 0: latency, "
+                          "bit 1: deep fusion, bit 2: batch processing ")};
 
   return flags;
 }
@@ -71,6 +76,8 @@ void NeuronDelegateProvider::LogParams(const ToolParams& params,
                  verbose);
   LOG_TOOL_PARAM(params, std::string, "neuron_execution_preference",
                  "Neuron execution preference", verbose);
+  LOG_TOOL_PARAM(params, int32_t, "neuron_optimization_hint",
+                 "Neuron optimization hint", verbose);
 }
 
 TfLiteDelegatePtr NeuronDelegateProvider::CreateTfLiteDelegate(
@@ -101,6 +108,13 @@ TfLiteDelegatePtr NeuronDelegateProvider::CreateTfLiteDelegate(
                          << string_execution_preference
                          << ") is not a valid neuron execution preference.";
       }
+    }
+
+    uint32_t hints = params.Get<int32_t>("neuron_optimization_hint");
+    if (hints) {
+      default_options.optimization_hint = hints;
+      if (hints >> 3)
+        TFLITE_LOG(WARN) << "unsupported hints: " << std::hex << hints;
     }
     return TfLiteNeuronDelegateCreateUnique(&default_options);
   }
