@@ -707,7 +707,7 @@ class NeuronOpBuilder {
             operand_mapping_->add_type_conversion(tensor_index, kTfLiteUInt8);
           }
           if (scale == 0) {
-            // QUANT8 tensors with zero scale are not valid in NNAPI.
+            // QUANT8 tensors with zero scale are not valid in Neuron.
             scale = 1;
           }
         }
