@@ -570,24 +570,42 @@ TfLiteStatus NeuronDelegateKernel::Map(TfLiteContext* context, int builtin_code,
       *nn_op_type = NEURON_CAST;
     } break;
     case kTfLiteBuiltinLeakyRelu: {
+      const auto input_type =
+          mapping_args.context->tensors[mapping_args.node->inputs->data[0]]
+              .type;
       auto builtin = reinterpret_cast<TfLiteLeakyReluParams*>(
           mapping_args.node->builtin_data);
 
-      TfLiteTensor t0;
-      t0.type = kTfLiteFloat32;
-      t0.allocation_type = kTfLiteDynamic;
-      t0.dims = TfLiteIntArrayCreate(1);
-      t0.dims->data[0] = 1;
-      t0.params.scale = 0;
-      t0.params.zero_point = 0;
+      TfLiteTensor alpha_tensor;
+      alpha_tensor.type = input_type;
+      alpha_tensor.allocation_type = kTfLiteDynamic;
+      alpha_tensor.dims = TfLiteIntArrayCreate(1);
+      alpha_tensor.dims->data[0] = 1;
+      alpha_tensor.params.zero_point = 0;
 
-      std::vector<float> dims_float(1);
-      std::fill(dims_float.begin(), dims_float.end(), builtin->alpha);
       int new_tensor_index = -1;
-      mapping_args.builder->AddNewInputConstantTensor(
-          NEURON_TENSOR_FLOAT32, kTfLiteFloat32, t0.dims, dims_float, t0.params,
-          &new_tensor_index);
-      TfLiteIntArrayFree(t0.dims);
+      if (input_type == kTfLiteFloat32) {
+        alpha_tensor.params.scale = 0;
+        std::vector<float> alpha_value = {builtin->alpha};
+        mapping_args.builder->AddNewInputConstantTensor(
+            NEURON_TENSOR_FLOAT32, kTfLiteFloat32, alpha_tensor.dims,
+            alpha_value, alpha_tensor.params, &new_tensor_index);
+      } else if (input_type == kTfLiteInt8) {
+        alpha_tensor.params.scale = builtin->alpha;
+        std::vector<int8_t> alpha_value = {1};
+        mapping_args.builder->AddNewInputConstantTensor(
+            NEURON_TENSOR_QUANT8_ASYMM_SIGNED, kTfLiteInt8,
+            alpha_tensor.dims, alpha_value, alpha_tensor.params,
+            &new_tensor_index);
+      } else {
+        alpha_tensor.params.scale = builtin->alpha;
+        std::vector<uint8_t> alpha_value = {1};
+        mapping_args.builder->AddNewInputConstantTensor(
+            NEURON_TENSOR_QUANT8_ASYMM, kTfLiteUInt8,
+            alpha_tensor.dims, alpha_value, alpha_tensor.params,
+            &new_tensor_index);
+      }
+
       *nn_op_type = NEURON_PRELU;
     } break;
     case kTfLiteBuiltinPrelu: {
