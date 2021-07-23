@@ -43,6 +43,7 @@ enum {
   NN_TENSOR_FLAG_SCALAR_AS_TENSOR = 1U << 0,
   NN_TENSOR_FLAG_INT8_CONVERSION = 1U << 1,
   NN_TENSOR_FLAG_USE_INT8_ASYMM_SIGNED = 1U << 2,
+  NN_TENSOR_FLAG_FORCE_PER_CHANNEL = 1U << 3,
 };
 
 class DequantizeMapping {
@@ -626,6 +627,8 @@ class NeuronOpBuilder {
         tensor_flags & NN_TENSOR_FLAG_INT8_CONVERSION;
     const bool use_int8_asymm_signed =
         tensor_flags & NN_TENSOR_FLAG_USE_INT8_ASYMM_SIGNED;
+    const bool force_per_channel =
+        tensor_flags & NN_TENSOR_FLAG_FORCE_PER_CHANNEL;
     int neuron_tensor_index =
         operand_mapping_->lite_index_to_neuron(tensor_index);
     if (neuron_tensor_index != -1) {
@@ -684,7 +687,7 @@ class NeuronOpBuilder {
           TfLiteAffineQuantization* quantization_params =
               static_cast<TfLiteAffineQuantization*>(
                   tensor->quantization.params);
-          if (quantization_params->scale->size > 1) {
+          if (quantization_params->scale->size > 1 || force_per_channel) {
             // Set up per-channel quantization.
             ann_perchannel_params = {
                 .channelDim = static_cast<uint32_t>(

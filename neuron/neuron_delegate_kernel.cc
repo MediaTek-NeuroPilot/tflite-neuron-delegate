@@ -1,24 +1,24 @@
 /*
-* Copyright (C) 2021 MediaTek Inc., this file is modified on 02/26/2021
-* by MediaTek Inc. based on MIT License .
-* Permission is hereby granted, free of charge, to any person obtaining a copy
-* of this software and associated documentation files (the ""Software""), to
-* deal in the Software without restriction, including without limitation the
-* rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
-* sell copies of the Software, and to permit persons to whom the Software is
-* furnished to do so, subject to the following conditions:
-*
-* The above copyright notice and this permission notice shall be included in all
-* copies or substantial portions of the Software.
-*
-* THE SOFTWARE IS PROVIDED ""AS IS"", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-* SOFTWARE.
-*/
+ * Copyright (C) 2021 MediaTek Inc., this file is modified on 02/26/2021
+ * by MediaTek Inc. based on MIT License .
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the ""Software""), to
+ * deal in the Software without restriction, including without limitation the
+ * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED ""AS IS"", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
 
 #include "neuron/neuron_delegate_kernel.h"
 
@@ -82,6 +82,16 @@ bool NeedInt8Conversion(const TfLiteContext* context, int builtin_code,
             weights_tensor.quantization.type == kTfLiteAffineQuantization) {
           return true;
         }
+      }
+      return false;
+    }
+    case kTfLiteBuiltinTransposeConv: {
+      // Transpose convolution has a different order of inputs:
+      // 0: output_shape, 1: filter, 2: input, 3: bias.
+      const int input_id = 2;
+      const TfLiteType input_type = context->tensors[input_id].type;
+      if (input_type == kTfLiteInt8) {
+        return true;
       }
       return false;
     }
@@ -233,6 +243,50 @@ TfLiteStatus NeuronDelegateKernel::Map(TfLiteContext* context, int builtin_code,
                                        int version, int neuron_sdk_version,
                                        const NeuronOpMappingArgs& mapping_args,
                                        NeuronOperationType* nn_op_type) {
+  auto add_zero_bias = [mapping_args](int input_id, int filter_id,
+                                      int num_elements) -> void {
+    // Neuron requires a bias tensor, so we allocate a new tensor to fill
+    // it with zeroes. It is deleted with other tensors in the context
+    // during subgraph destructor call.
+    int bias_index = -1;
+    mapping_args.context->AddTensors(mapping_args.context, 1, &bias_index);
+    TfLiteTensor* bias_tensor = &mapping_args.context->tensors[bias_index];
+    const auto input_type = mapping_args.context->tensors[input_id].type;
+    if (input_type == kTfLiteFloat32) {
+      bias_tensor->type = kTfLiteFloat32;
+    } else {
+      bias_tensor->type = kTfLiteInt32;
+    }
+    // Create an array with a required bias shape and resize the bias
+    // tensor.
+    TfLiteIntArray* bias_shape = TfLiteIntArrayCreate(1);
+    bias_shape->data[0] = num_elements;
+    bias_tensor->allocation_type = kTfLiteDynamic;
+    mapping_args.context->ResizeTensor(mapping_args.context, bias_tensor,
+                                       bias_shape);
+    // Set tensor's values to zeroes and add it using AddVector*, so
+    // that the values are copied to Neuron. We don't use the AddTensor
+    // function because it doesn't copy values and the tensor we just
+    // created is not in the node->inputs.
+    if (input_type == kTfLiteFloat32) {
+      memset(bias_tensor->data.f, 0, num_elements * sizeof(float));
+      mapping_args.builder->AddVectorFloat32Operand(bias_tensor->data.f,
+                                                    num_elements);
+    } else {
+      memset(bias_tensor->data.i32, 0, num_elements * sizeof(int));
+      const TfLiteTensor& input_tensor =
+          mapping_args.context->tensors[input_id];
+      const TfLiteTensor& filter_tensor =
+          mapping_args.context->tensors[filter_id];
+      // Neuron requires bias scale to be a product of an input scale and
+      // a filter scale.
+      bias_tensor->params.scale =
+          input_tensor.params.scale * filter_tensor.params.scale;
+      mapping_args.builder->AddVectorInt32Operand(
+          bias_tensor->data.i32, num_elements, bias_tensor->params.scale,
+          /*zero_point=*/0);
+    }
+  };
   switch (builtin_code) {
     case kTfLiteBuiltinAdd: {
       auto builtin =
@@ -474,67 +528,42 @@ TfLiteStatus NeuronDelegateKernel::Map(TfLiteContext* context, int builtin_code,
       *nn_op_type = NEURON_SLICE;
     } break;
     case kTfLiteBuiltinTransposeConv: {
-      const bool hybrid_op = IsHybridOperator(
-          mapping_args.context, kTfLiteBuiltinTransposeConv, mapping_args.node);
+      int input_tensor_flags = 0;
+      const int input_tensor_id =
+          mapping_args.node->inputs->data[/*kDataInputTensor*/ 2];
+      const int weight_tensor_id =
+          mapping_args.node->inputs->data[/*kWeightsTensor*/ 1];
+
+      // Transpose convolution doesn't have hybrid variation.
+      const bool hybrid_op = false;
+
       mapping_args.builder->AddTensorInput(
-          mapping_args.node->inputs->data[/*kDataInputTensor*/ 2], hybrid_op);
+          input_tensor_id, hybrid_op,
+          input_tensor_flags | NN_TENSOR_FLAG_USE_INT8_ASYMM_SIGNED);
+
+      // Transpose convlution uses per-channel quantization with int8 inputs
+      // even if the number of channels in quantization parameters is equal to 1
+      // (as opposed to conv2d, which uses per-tensor quantization in this
+      // case).
       mapping_args.builder->AddTensorInput(
-          mapping_args.node->inputs->data[/*kWeightsTensor*/ 1], hybrid_op);
+          weight_tensor_id, hybrid_op,
+          input_tensor_flags | NN_TENSOR_FLAG_FORCE_PER_CHANNEL);
 
-      // Neuron requires a bias tensor, so we allocate a new tensor to fill
-      // it with zeroes. It is deleted with other tensors in the context
-      // during subgraph destructor call.
-      int bias_index = -1;
-      mapping_args.context->AddTensors(mapping_args.context, 1, &bias_index);
-      TfLiteTensor* bias_tensor = &mapping_args.context->tensors[bias_index];
-      const auto input_type =
-          mapping_args.context
-              ->tensors[mapping_args.node->inputs->data[/*kDataInputTensor*/ 2]]
-              .type;
-      if (input_type == kTfLiteFloat32) {
-        bias_tensor->type = kTfLiteFloat32;
+      const bool is_bias_present =
+          mapping_args.node->inputs->size == 4 &&
+          mapping_args.node->inputs->data[/*kBiasTensor*/ 3] !=
+              kTfLiteOptionalTensor;
+
+      if (is_bias_present) {
+        mapping_args.builder->AddTensorInput(
+            mapping_args.node->inputs->data[/*kBiasTensor*/ 3], hybrid_op);
       } else {
-        bias_tensor->type = kTfLiteInt32;
-      }
-
-      // Create an array with a required bias shape and resize the bias
-      // tensor.
-      TfLiteIntArray* bias_shape = TfLiteIntArrayCreate(1);
-      const TfLiteTensor& output_shape =
-          mapping_args.context->tensors[mapping_args.node->inputs
-                                            ->data[/*kOutputShapeTensor*/ 0]];
-      const int output_depth = output_shape.data.i32[3];
-      bias_shape->data[0] = output_depth;
-      bias_tensor->allocation_type = kTfLiteDynamic;
-      mapping_args.context->ResizeTensor(mapping_args.context, bias_tensor,
-                                         bias_shape);
-
-      // Set tensor's values to zeroes and add it using AddVector*, so
-      // that the values are copied to Neuron. We don't use the AddTensor
-      // function because it doesn't copy values and the tensor we just
-      // created is not in the node->inputs.
-      if (input_type == kTfLiteFloat32) {
-        memset(bias_tensor->data.f, 0, output_depth * sizeof(float));
-        mapping_args.builder->AddVectorFloat32Operand(bias_tensor->data.f,
-                                                      output_depth);
-      } else {
-        memset(bias_tensor->data.i32, 0, output_depth * sizeof(int));
-        const TfLiteTensor& input_tensor =
+        const TfLiteTensor& output_shape =
             mapping_args.context->tensors[mapping_args.node->inputs
-                                              ->data[/*kDataInputTensor*/ 2]];
-        const TfLiteTensor& filter_tensor =
-            mapping_args.context->tensors[mapping_args.node->inputs
-                                              ->data[/*kWeightsTensor*/ 1]];
-        // Neuron requires bias scale to be a product of an input scale and
-        // a filter scale.
-        bias_tensor->params.scale =
-            input_tensor.params.scale * filter_tensor.params.scale;
-        mapping_args.builder->AddVectorInt32Operand(
-            bias_tensor->data.i32, output_depth,
-            input_tensor.params.scale * filter_tensor.params.scale,
-            /*zero_point=*/0);
+                                              ->data[/*kOutputShapeTensor*/ 0]];
+        const int output_depth = output_shape.data.i32[3];
+        add_zero_bias(input_tensor_id, weight_tensor_id, output_depth);
       }
-
       mapping_args.builder->AddTensorInput(
           mapping_args.node->inputs->data[/*kOutputShapeTensor*/ 0], hybrid_op);
 
@@ -606,16 +635,14 @@ TfLiteStatus NeuronDelegateKernel::Map(TfLiteContext* context, int builtin_code,
         alpha_tensor.params.scale = builtin->alpha;
         std::vector<int8_t> alpha_value = {1};
         mapping_args.builder->AddNewInputConstantTensor(
-            NEURON_TENSOR_QUANT8_ASYMM_SIGNED, kTfLiteInt8,
-            alpha_tensor.dims, alpha_value, alpha_tensor.params,
-            &new_tensor_index);
+            NEURON_TENSOR_QUANT8_ASYMM_SIGNED, kTfLiteInt8, alpha_tensor.dims,
+            alpha_value, alpha_tensor.params, &new_tensor_index);
       } else {
         alpha_tensor.params.scale = builtin->alpha;
         std::vector<uint8_t> alpha_value = {1};
         mapping_args.builder->AddNewInputConstantTensor(
-            NEURON_TENSOR_QUANT8_ASYMM, kTfLiteUInt8,
-            alpha_tensor.dims, alpha_value, alpha_tensor.params,
-            &new_tensor_index);
+            NEURON_TENSOR_QUANT8_ASYMM, kTfLiteUInt8, alpha_tensor.dims,
+            alpha_value, alpha_tensor.params, &new_tensor_index);
       }
 
       *nn_op_type = NEURON_PRELU;
@@ -1091,6 +1118,11 @@ TfLiteStatus NeuronDelegateKernel::AddOpsAndTensors(TfLiteContext* context) {
 
     // Map inputs to Neuron tensor indices.
     for (int input_pos = 0; input_pos < node->inputs->size; ++input_pos) {
+      if (reg->builtin_code == kTfLiteBuiltinTransposeConv) {
+        // Everything is added during Map since input tensors
+        // have different order.
+        continue;
+      }
       const auto input_index = node->inputs->data[input_pos];
       if (need_int8_conversion &&
           (input_pos == 0 ||
@@ -1145,11 +1177,6 @@ TfLiteStatus NeuronDelegateKernel::AddOpsAndTensors(TfLiteContext* context) {
           (input_index == node->inputs->data[0])) {
         // Skip the axis input tensor; it will be added as a scalar operand
         // by the Map() mapping.
-        continue;
-      }
-      if (reg->builtin_code == kTfLiteBuiltinTransposeConv) {
-        // Everything is added during Map since input tensors
-        // have different order.
         continue;
       }
 
