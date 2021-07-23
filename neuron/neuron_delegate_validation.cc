@@ -258,14 +258,25 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
     case kTfLiteBuiltinReshape: {
       ExpectOpVersion(version, 1, &val_ctx);
       ExpectIsFloatOrQuant8Operator(context, node, &val_ctx);
-      Expect(node->inputs->size >= 2,
-             NeuronValidationFailureType::kMissingRequiredOperand,
-             "Expected at least 2 inputs", &val_ctx);
       if (node->inputs->size >= 2) {
         Expect(context->tensors[node->inputs->data[1]].allocation_type ==
                    kTfLiteMmapRo,
                NeuronValidationFailureType::kInputTensorShouldHaveConstantShape,
                "The shape input tensor must be constant.", &val_ctx);
+      }
+      if (node->inputs->size == 1) {
+        // reject scalar reshaping
+        auto* params =
+            reinterpret_cast<TfLiteReshapeParams*>(node->builtin_data);
+        int num_dimensions = params->num_dimensions;
+        if (num_dimensions == 1 && params->shape[0] == 0) {
+          // Legacy tflite models use a shape parameter of [0] to indicate
+          // scalars.
+          num_dimensions = 0;
+        }
+        Expect(num_dimensions > 0,
+               NeuronValidationFailureType::kUnsupportedOperandRank,
+               "New shape rank should be > 0", &val_ctx);
       }
     } break;
     case kTfLiteBuiltinResizeBilinear: {

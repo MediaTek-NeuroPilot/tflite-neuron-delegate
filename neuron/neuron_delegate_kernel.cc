@@ -311,6 +311,18 @@ TfLiteStatus NeuronDelegateKernel::Map(TfLiteContext* context, int builtin_code,
       *nn_op_type = NEURON_SOFTMAX;
     } break;
     case kTfLiteBuiltinReshape: {
+      if (mapping_args.node->inputs->size == 1) {
+        // if no new_shape tensor, construct the new shape from params.
+        auto* params = reinterpret_cast<TfLiteReshapeParams*>(
+            mapping_args.node->builtin_data);
+        int num_dimensions = params->num_dimensions;
+        std::vector<int32_t> output_shape(num_dimensions);
+        for (int i = 0; i < num_dimensions; ++i) {
+          output_shape[i] = params->shape[i];
+        }
+        mapping_args.builder->AddVectorInt32Operand(
+            output_shape.data(), static_cast<uint32_t>(num_dimensions));
+      }
       *nn_op_type = NEURON_RESHAPE;
     } break;
     case kTfLiteBuiltinResizeBilinear: {
