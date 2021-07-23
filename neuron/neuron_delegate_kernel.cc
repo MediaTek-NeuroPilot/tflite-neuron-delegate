@@ -55,6 +55,8 @@ bool IsScalarInputSupported(int builtin_code) {
     case kTfLiteBuiltinPow:
     case kTfLiteBuiltinMaximum:
     case kTfLiteBuiltinMinimum:
+    case kTfLiteBuiltinPrelu:
+    case kTfLiteBuiltinLeakyRelu:
     case kTfLiteBuiltinReduceMax:
     case kTfLiteBuiltinSum:
       return true;
