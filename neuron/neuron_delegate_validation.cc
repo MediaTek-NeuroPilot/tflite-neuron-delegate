@@ -403,7 +403,7 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
       ExpectOpVersion(version, 1, &val_ctx);
     } break;
     case kTfLiteBuiltinTransposeConv: {
-      ExpectOpVersion(version, 1, &val_ctx);
+      ExpectMaxOpVersion(version, 2, &val_ctx);
       Expect((node->inputs->size > 1) &&
                  (context->tensors[node->inputs->data[0]].allocation_type ==
                   kTfLiteMmapRo) &&
