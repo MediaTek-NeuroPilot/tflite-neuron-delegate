@@ -248,8 +248,14 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
     } break;
     case kTfLiteBuiltinSoftmax: {
       ExpectOpVersion(version, 2, &val_ctx);
-      const auto& input = context->tensors[node->outputs->data[0]];
       ExpectIsFloatOrQuant8Operator(context, node, &val_ctx);
+      const auto& output = context->tensors[node->outputs->data[0]];
+      ExpectTypeIn(output.type, {kTfLiteFloat32, kTfLiteUInt8, kTfLiteInt8},
+                   NeuronValidationFailureType::kUnsupportedOutputType,
+                   "Output type should be one of kTfLiteFloat32, kTfLiteUInt8, "
+                   "kTfLiteInt8.",
+                   &val_ctx);
+      const auto& input = context->tensors[node->inputs->data[0]];
       const int input_rank = input.dims->size;
       Expect(input_rank <= 4,
              NeuronValidationFailureType::kUnsupportedOperandRank,

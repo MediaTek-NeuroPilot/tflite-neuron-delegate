@@ -112,6 +112,7 @@ bool NeedInt8Conversion(const TfLiteContext* context, int builtin_code,
     case kTfLiteBuiltinGreaterEqual:
     case kTfLiteBuiltinHardSwish:
     case kTfLiteBuiltinL2Normalization:
+    case kTfLiteBuiltinLeakyRelu:
     case kTfLiteBuiltinLess:
     case kTfLiteBuiltinLessEqual:
     case kTfLiteBuiltinLogistic:
@@ -123,6 +124,7 @@ bool NeedInt8Conversion(const TfLiteContext* context, int builtin_code,
     case kTfLiteBuiltinNotEqual:
     case kTfLiteBuiltinPad:
     case kTfLiteBuiltinPadv2:
+    case kTfLiteBuiltinPrelu:
     case kTfLiteBuiltinReduceMax:
     case kTfLiteBuiltinReduceMin:
     case kTfLiteBuiltinRelu:
@@ -1135,8 +1137,10 @@ TfLiteStatus NeuronDelegateKernel::AddOpsAndTensors(TfLiteContext* context) {
            reg->builtin_code == kTfLiteBuiltinConcatenation ||
            reg->builtin_code == kTfLiteBuiltinMaximum ||
            reg->builtin_code == kTfLiteBuiltinMinimum ||
+           reg->builtin_code == kTfLiteBuiltinLeakyRelu ||
            reg->builtin_code == kTfLiteBuiltinLess ||
            reg->builtin_code == kTfLiteBuiltinLessEqual ||
+           reg->builtin_code == kTfLiteBuiltinPrelu ||
            reg->builtin_code == kTfLiteBuiltinGreater ||
            reg->builtin_code == kTfLiteBuiltinGreaterEqual ||
            reg->builtin_code == kTfLiteBuiltinEqual ||
