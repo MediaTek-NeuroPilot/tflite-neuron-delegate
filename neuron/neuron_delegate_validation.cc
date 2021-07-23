@@ -323,6 +323,10 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
       Expect(context->tensors[node->inputs->data[0]].dims->size <= 4,
              NeuronValidationFailureType::kUnsupportedOperandRank,
              "Input rank should be less than 4", &val_ctx);
+
+      const auto& input_type = context->tensors[node->inputs->data[0]].type;
+      EXPECT_INPUT_TYPE_IN(input_type, kTfLiteFloat16, kTfLiteFloat32,
+                           kTfLiteUInt8, kTfLiteInt8);
     } break;
     case kTfLiteBuiltinDequantize: {
       ExpectOpVersion(version, 2, &val_ctx);
