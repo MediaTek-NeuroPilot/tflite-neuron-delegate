@@ -558,6 +558,9 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
       EXPECT_INPUT_TYPE_IN(input_type, kTfLiteFloat32, kTfLiteFloat16,
                            kTfLiteInt32, kTfLiteUInt8, kTfLiteInt8);
 
+      Expect(positions.allocation_type == kTfLiteMmapRo,
+             NeuronValidationFailureType::kUnsupportedInputType,
+             "Neuron only supports constant int32 positions tensor", &val_ctx);
       Expect(positions.type == kTfLiteInt32,
              NeuronValidationFailureType::kUnsupportedInputType,
              "Positions type should be one of kTfLiteInt32", &val_ctx);
