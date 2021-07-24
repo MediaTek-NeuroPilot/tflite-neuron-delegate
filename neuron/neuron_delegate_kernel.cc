@@ -1097,6 +1097,13 @@ TfLiteStatus NeuronDelegateKernel::AddOpsAndTensors(TfLiteContext* context) {
     TF_LITE_ENSURE_STATUS(
         context->GetNodeAndRegistration(context, node_index, &node, &reg));
 
+    // Delegate PACK by lowering it into CONCAT + RESHAPE.
+    if (reg->builtin_code == kTfLiteBuiltinPack) {
+      TF_LITE_ENSURE_STATUS(
+          builder.TransformPackIntoSupportedOps(node, reg));
+      continue;
+    }
+
     const bool hybrid_op = IsHybridOperator(context, reg->builtin_code, node);
     const bool scalar_as_tensor = IsScalarInputSupported(reg->builtin_code);
     const bool need_int8_conversion =
@@ -1321,23 +1328,45 @@ TfLiteStatus NeuronDelegateKernel::AddOpsAndTensors(TfLiteContext* context) {
     if (use_int8_asymm_signed) {
       output_tensor_flags |= NN_TENSOR_FLAG_USE_INT8_ASYMM_SIGNED;
     }
+    // fc_nn_intermediate_output_index is used to indicate whether additional
+    // RESHAPE op is needed.
+    int fc_nn_intermediate_output_index = -1;
     for (int output_pos = 0; output_pos < node->outputs->size; ++output_pos) {
-      const auto output_index = node->outputs->data[output_pos];
+      auto output_index = node->outputs->data[output_pos];
 
       // Outputs for  basic LSTM cell are set in the Map function since
       if (reg->builtin_code == kTfLiteBuiltinLstm && isLstmBasicKernel(node)) {
         continue;
       }
+      // Handle FC with keep_num_dims==true.
+      if (reg->builtin_code == kTfLiteBuiltinFullyConnected &&
+          reinterpret_cast<TfLiteFullyConnectedParams*>(node->builtin_data)
+              ->keep_num_dims) {
+        auto& output_tensor = context->tensors[output_index];
 
-      TF_LITE_ENSURE_STATUS(
-          builder.AddTensorOutput(output_index, output_tensor_flags));
+        int num_units = output_tensor.dims->data[output_tensor.dims->size - 1];
+        std::vector<uint32_t> output_dims(2);
+        output_dims[0] = NumElements(output_tensor.dims) / num_units;
+        output_dims[1] = num_units;
+        TF_LITE_ENSURE_STATUS(builder.AddIntermediateOutputTensor(
+            output_tensor.type, output_dims.size(), output_dims.data(),
+            output_tensor.params.scale, output_tensor.params.zero_point,
+            &fc_nn_intermediate_output_index));
+      } else {
+        TF_LITE_ENSURE_STATUS(
+            builder.AddTensorOutput(output_index, output_tensor_flags));
+      }
     }
 
     // Dequantize operators may have to be added in case inputs are to be
     // floating-point.
     AddDequantizeOperatorsWhereNeeded(context, reg->builtin_code, node,
                                       &builder);
-    builder.FinalizeAddOperation(nn_op_type);
+    TF_LITE_ENSURE_STATUS(builder.FinalizeAddOperation(nn_op_type));
+    if (fc_nn_intermediate_output_index > -1) {
+      TF_LITE_ENSURE_STATUS(builder.AppendReshape(
+          fc_nn_intermediate_output_index, node->outputs->data[0]));
+    }
   }
   TFLITE_LOG_PROD(tflite::TFLITE_LOG_INFO, "AddOpsAndTensors done");
   return kTfLiteOk;

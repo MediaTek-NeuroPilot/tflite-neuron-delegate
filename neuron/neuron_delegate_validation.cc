@@ -661,6 +661,18 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
             &val_ctx);
       }
     } break;
+    case kTfLiteBuiltinPack: {
+      ExpectOpVersion(version, 2, &val_ctx);
+      const auto input_type = context->tensors[node->inputs->data[0]].type;
+      EXPECT_INPUT_TYPE_IN(input_type, kTfLiteInt32, kTfLiteFloat32,
+                           kTfLiteInt8);
+      auto builtin = reinterpret_cast<TfLitePackParams*>(node->builtin_data);
+      Expect(builtin->axis != -1 &&
+                 builtin->axis !=
+                     context->tensors[node->inputs->data[0]].dims->size,
+             NeuronValidationFailureType::kUnsupportedOperandValue,
+             "Neuron does not support axis being the last dimension", &val_ctx);
+    } break;
     default:
       // All other operators are not mapped.
       TFLITE_LOG_PROD(tflite::TFLITE_LOG_WARNING,

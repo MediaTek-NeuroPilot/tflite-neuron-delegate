@@ -407,6 +407,65 @@ class NeuronOpBuilder {
     return kTfLiteOk;
   }
 
+  // Add a RESHAPE op which reshapes an NNAPI intermediate output to the
+  // dimensions of the TFLite output tensor.
+  TfLiteStatus AppendReshape(int nn_input_index, int lite_out_tensor_index) {
+    augmented_inputs_.push_back(nn_input_index);
+    auto& output_tensor = context_->tensors[lite_out_tensor_index];
+    TF_LITE_ENSURE_STATUS(
+        AddVectorInt32Operand(output_tensor.dims->data,
+                              static_cast<uint32_t>(output_tensor.dims->size)));
+    TF_LITE_ENSURE_OK(context_,
+                      AddTensorOutput(lite_out_tensor_index,
+                                      NN_TENSOR_FLAG_USE_INT8_ASYMM_SIGNED));
+    TF_LITE_ENSURE_STATUS(
+        FinalizeAddOperation(NEURON_RESHAPE));
+    return kTfLiteOk;
+  }
+
+  // Lower PACK into CONCAT + RESHAPE when possible
+  TfLiteStatus TransformPackIntoSupportedOps(TfLiteNode* node,
+                                             TfLiteRegistration* reg) {
+    // Add input tensors for CONCAT, and calculate the dimensions for the
+    // output.
+    int concat_output_ann_index = -1;
+    TfLitePackParams* builtin =
+        reinterpret_cast<TfLitePackParams*>(node->builtin_data);
+    auto& input_tensor = context_->tensors[node->inputs->data[0]];
+    int axis = builtin->axis < 0 ? input_tensor.dims->size + builtin->axis + 1
+                                 : builtin->axis;
+    TF_LITE_ENSURE(context_, axis < input_tensor.dims->size);
+    uint32_t concat_dim_size = 0;
+    for (int input_pos = 0; input_pos < node->inputs->size; ++input_pos) {
+      const auto input_index = node->inputs->data[input_pos];
+      concat_dim_size +=
+          context_->tensors[node->inputs->data[input_pos]].dims->data[axis];
+      TF_LITE_ENSURE_STATUS(
+          AddTensorInput(input_index, /*hybrid_op=*/false,
+                         NN_TENSOR_FLAG_USE_INT8_ASYMM_SIGNED));
+    }
+    TF_LITE_ENSURE_STATUS(AddScalarInt32Operand(axis));
+    std::vector<uint32_t> concat_output_shape(input_tensor.dims->size, 0);
+    for (int i = 0; i < concat_output_shape.size(); i++) {
+      if (i == axis) {
+        concat_output_shape[i] = concat_dim_size;
+      } else {
+        concat_output_shape[i] = input_tensor.dims->data[i];
+      }
+    }
+    TF_LITE_ENSURE_STATUS(AddIntermediateOutputTensor(
+        input_tensor.type, concat_output_shape.size(),
+        concat_output_shape.data(), input_tensor.params.scale,
+        input_tensor.params.zero_point, &concat_output_ann_index));
+    TF_LITE_ENSURE_STATUS(
+        FinalizeAddOperation(NEURON_CONCATENATION));
+
+    // Reshape the output tensor
+    TF_LITE_ENSURE_STATUS(AppendReshape(
+        concat_output_ann_index, node->outputs->data[0]));
+    return kTfLiteOk;
+  }
+
   // Finish emitting the op (of type `type`) into the Neuron.
   TfLiteStatus FinalizeAddOperation(NeuronOperationType type) {
     // Actually add a Neuron operation
@@ -516,6 +575,31 @@ class NeuronOpBuilder {
         nn_type, type, dim_array, tensor_value, quant_params, tensor_index);
     TfLiteIntArrayFree(dim_array);
     return result;
+  }
+
+  TfLiteStatus AddIntermediateOutputTensor(TfLiteType tfl_type,
+                                           uint32_t dimension_count,
+                                           const uint32_t* dimension_data,
+                                           float scale, int32_t zero_point,
+                                           int* ann_index_out) {
+    int32_t nn_type;
+    switch (tfl_type) {
+      case kTfLiteFloat32:
+        nn_type = NEURON_TENSOR_FLOAT32;
+        break;
+      case kTfLiteInt8:
+        nn_type = NEURON_TENSOR_QUANT8_ASYMM_SIGNED;
+        break;
+      case kTfLiteUInt8:
+        nn_type = NEURON_TENSOR_QUANT8_ASYMM;
+        break;
+      default:
+        return kTfLiteError;
+    }
+    TF_LITE_ENSURE_STATUS(
+        AddAdditionalOutputTensor(dimension_count, dimension_data, nn_type,
+                                  scale, zero_point, ann_index_out));
+    return kTfLiteOk;
   }
 
  private:
