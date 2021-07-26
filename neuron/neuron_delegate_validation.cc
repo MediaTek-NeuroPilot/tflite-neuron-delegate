@@ -232,11 +232,6 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
     } break;
     case kTfLiteBuiltinFullyConnected: {
       ExpectMaxOpVersion(version, 5, &val_ctx);
-      // TODO(Code): Add support for FullyConnected with no bias.
-      Expect(node->inputs->size == 3 &&
-                 node->inputs->data[2] != kTfLiteOptionalTensor,
-             NeuronValidationFailureType::kMissingRequiredOperand,
-             "FullyConnected with no bias not supported", &val_ctx);
       const TfLiteType input_type =
           context->tensors[node->inputs->data[(0)]].type;
       if (input_type == kTfLiteUInt8) {
