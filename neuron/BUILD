@@ -1,7 +1,6 @@
 load("@org_tensorflow//tensorflow/lite:build_def.bzl", "tflite_copts")
-load("@org_tensorflow//tensorflow/lite:build_def.bzl", "tflite_linkopts")
-load("@org_tensorflow//tensorflow/lite/tools/evaluation/tasks:build_def.bzl", "task_linkopts")
 load("@org_tensorflow//tensorflow/lite:special_rules.bzl", "tflite_portable_test_suite")
+load("//neuron:build_def.bzl", "android_linkopts")
 
 package(
     default_visibility = [
@@ -113,6 +112,7 @@ cc_library(
 cc_binary(
     name = "benchmark_model_plus_neuron_delegate",
     copts = tflite_copts(),
+    linkopts = android_linkopts(),
     deps = [
         ":neuron_delegate_provider",
         "@org_tensorflow//tensorflow/lite/tools/benchmark:benchmark_model_main",
@@ -122,6 +122,7 @@ cc_binary(
 cc_binary(
     name = "inference_diff_plus_neuron_delegate",
     copts = tflite_copts(),
+    linkopts = android_linkopts(),
     deps = [
         ":neuron_delegate_provider",
         "@org_tensorflow//tensorflow/lite/tools/evaluation/tasks:task_executor_main",
@@ -132,6 +133,7 @@ cc_binary(
 cc_binary(
     name = "imagenet_classification_eval_plus_neuron_delegate",
     copts = tflite_copts(),
+    linkopts = android_linkopts(),
     deps = [
         ":neuron_delegate_provider",
         "@org_tensorflow//tensorflow/lite/tools/evaluation/tasks:task_executor_main",
@@ -142,6 +144,7 @@ cc_binary(
 cc_binary(
     name = "coco_object_detection_eval_plus_neuron_delegate",
     copts = tflite_copts(),
+    linkopts = android_linkopts(),
     deps = [
         ":neuron_delegate_provider",
         "@org_tensorflow//tensorflow/lite/tools/evaluation/tasks:task_executor_main",
@@ -153,14 +156,7 @@ cc_binary(
     name = "label_image_plus_neuron_delegate",
     srcs = ["@org_tensorflow//tensorflow/lite/examples/label_image:label_image.cc"],
     copts = tflite_copts(),
-    linkopts = tflite_linkopts() + select({
-        "@org_tensorflow//tensorflow:android": [
-            "-pie",  # Android 5.0 and later supports only PIE
-            "-lm",  # some builtin ops, e.g., tanh, need -lm
-            "-Wl,-rpath=/data/local/tmp",  # for hexagon delegate
-        ],
-        "//conditions:default": [],
-    }),
+    linkopts = android_linkopts(),
     deps = [
         ":neuron_delegate_provider",
         "@org_tensorflow//tensorflow/lite/examples/label_image",
