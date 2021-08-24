@@ -232,11 +232,6 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
     } break;
     case kTfLiteBuiltinFullyConnected: {
       ExpectMaxOpVersion(version, 5, &val_ctx);
-      // TODO(Code): Add support for FullyConnected with no bias.
-      Expect(node->inputs->size == 3 &&
-                 node->inputs->data[2] != kTfLiteOptionalTensor,
-             NeuronValidationFailureType::kMissingRequiredOperand,
-             "FullyConnected with no bias not supported", &val_ctx);
       const TfLiteType input_type =
           context->tensors[node->inputs->data[(0)]].type;
       if (input_type == kTfLiteUInt8) {
@@ -248,8 +243,14 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
     } break;
     case kTfLiteBuiltinSoftmax: {
       ExpectOpVersion(version, 2, &val_ctx);
-      const auto& input = context->tensors[node->outputs->data[0]];
       ExpectIsFloatOrQuant8Operator(context, node, &val_ctx);
+      const auto& output = context->tensors[node->outputs->data[0]];
+      ExpectTypeIn(output.type, {kTfLiteFloat32, kTfLiteUInt8, kTfLiteInt8},
+                   NeuronValidationFailureType::kUnsupportedOutputType,
+                   "Output type should be one of kTfLiteFloat32, kTfLiteUInt8, "
+                   "kTfLiteInt8.",
+                   &val_ctx);
+      const auto& input = context->tensors[node->inputs->data[0]];
       const int input_rank = input.dims->size;
       Expect(input_rank <= 4,
              NeuronValidationFailureType::kUnsupportedOperandRank,
@@ -258,14 +259,25 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
     case kTfLiteBuiltinReshape: {
       ExpectOpVersion(version, 1, &val_ctx);
       ExpectIsFloatOrQuant8Operator(context, node, &val_ctx);
-      Expect(node->inputs->size >= 2,
-             NeuronValidationFailureType::kMissingRequiredOperand,
-             "Expected at least 2 inputs", &val_ctx);
       if (node->inputs->size >= 2) {
         Expect(context->tensors[node->inputs->data[1]].allocation_type ==
                    kTfLiteMmapRo,
                NeuronValidationFailureType::kInputTensorShouldHaveConstantShape,
                "The shape input tensor must be constant.", &val_ctx);
+      }
+      if (node->inputs->size == 1) {
+        // reject scalar reshaping
+        auto* params =
+            reinterpret_cast<TfLiteReshapeParams*>(node->builtin_data);
+        int num_dimensions = params->num_dimensions;
+        if (num_dimensions == 1 && params->shape[0] == 0) {
+          // Legacy tflite models use a shape parameter of [0] to indicate
+          // scalars.
+          num_dimensions = 0;
+        }
+        Expect(num_dimensions > 0,
+               NeuronValidationFailureType::kUnsupportedOperandRank,
+               "New shape rank should be > 0", &val_ctx);
       }
     } break;
     case kTfLiteBuiltinResizeBilinear: {
@@ -306,6 +318,10 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
       Expect(context->tensors[node->inputs->data[0]].dims->size <= 4,
              NeuronValidationFailureType::kUnsupportedOperandRank,
              "Input rank should be less than 4", &val_ctx);
+
+      const auto& input_type = context->tensors[node->inputs->data[0]].type;
+      EXPECT_INPUT_TYPE_IN(input_type, kTfLiteFloat16, kTfLiteFloat32,
+                           kTfLiteUInt8, kTfLiteInt8);
     } break;
     case kTfLiteBuiltinDequantize: {
       ExpectOpVersion(version, 2, &val_ctx);
@@ -403,7 +419,7 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
       ExpectOpVersion(version, 1, &val_ctx);
     } break;
     case kTfLiteBuiltinTransposeConv: {
-      ExpectOpVersion(version, 1, &val_ctx);
+      ExpectMaxOpVersion(version, 3, &val_ctx);
       Expect((node->inputs->size > 1) &&
                  (context->tensors[node->inputs->data[0]].allocation_type ==
                   kTfLiteMmapRo) &&
@@ -537,6 +553,9 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
       EXPECT_INPUT_TYPE_IN(input_type, kTfLiteFloat32, kTfLiteFloat16,
                            kTfLiteInt32, kTfLiteUInt8, kTfLiteInt8);
 
+      Expect(positions.allocation_type == kTfLiteMmapRo,
+             NeuronValidationFailureType::kUnsupportedInputType,
+             "Neuron only supports constant int32 positions tensor", &val_ctx);
       Expect(positions.type == kTfLiteInt32,
              NeuronValidationFailureType::kUnsupportedInputType,
              "Positions type should be one of kTfLiteInt32", &val_ctx);
@@ -639,6 +658,18 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
             "large.",
             &val_ctx);
       }
+    } break;
+    case kTfLiteBuiltinPack: {
+      ExpectOpVersion(version, 2, &val_ctx);
+      const auto input_type = context->tensors[node->inputs->data[0]].type;
+      EXPECT_INPUT_TYPE_IN(input_type, kTfLiteInt32, kTfLiteFloat32,
+                           kTfLiteInt8);
+      auto builtin = reinterpret_cast<TfLitePackParams*>(node->builtin_data);
+      Expect(builtin->axis != -1 &&
+                 builtin->axis !=
+                     context->tensors[node->inputs->data[0]].dims->size,
+             NeuronValidationFailureType::kUnsupportedOperandValue,
+             "Neuron does not support axis being the last dimension", &val_ctx);
     } break;
     default:
       // All other operators are not mapped.

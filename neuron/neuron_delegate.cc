@@ -27,9 +27,11 @@
 #include "neuron/neuron_delegate_kernel.h"
 #include "neuron/neuron_delegate_validation.h"
 #include "neuron/neuron_implementation.h"
+#include "tensorflow/lite/builtin_ops.h"
 #include "tensorflow/lite/context_util.h"
 #include "tensorflow/lite/delegates/utils/simple_delegate.h"
 #include "tensorflow/lite/minimal_logging.h"
+#include "tensorflow/lite/schema/schema_generated.h"
 
 namespace tflite {
 namespace neuron {
@@ -50,8 +52,11 @@ class NeuronDelegate : public SimpleDelegateInterface {
     std::vector<NeuronValidationFailure> failure;
     bool supported = Validate(registration, node, context, &failure);
     if (!supported) {
-      TFLITE_LOG_PROD(tflite::TFLITE_LOG_ERROR, "OP %d is not supported(%s)",
-                      registration->builtin_code, failure[0].message.c_str());
+      TFLITE_LOG_PROD(
+          tflite::TFLITE_LOG_ERROR, "OP %s (v%d) is not supported (%s)",
+          tflite::EnumNameBuiltinOperator(
+              static_cast<BuiltinOperator>(registration->builtin_code)),
+          registration->version, failure[0].message.c_str());
     }
     return supported;
   }
