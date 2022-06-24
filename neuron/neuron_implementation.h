@@ -1,42 +1,52 @@
 /*
-* Copyright (C) 2021 MediaTek Inc., this file is modified on 02/26/2021
-* by MediaTek Inc. based on MIT License .
-* Permission is hereby granted, free of charge, to any person obtaining a copy
-* of this software and associated documentation files (the ""Software""), to
-* deal in the Software without restriction, including without limitation the
-* rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
-* sell copies of the Software, and to permit persons to whom the Software is
-* furnished to do so, subject to the following conditions:
-*
-* The above copyright notice and this permission notice shall be included in all
-* copies or substantial portions of the Software.
-*
-* THE SOFTWARE IS PROVIDED ""AS IS"", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-* SOFTWARE.
-*/
+ * Copyright (C) 2021 MediaTek Inc., this file is modified on 02/26/2021
+ * by MediaTek Inc. based on MIT License .
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the ""Software""), to
+ * deal in the Software without restriction, including without limitation the
+ * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED ""AS IS"", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
 
 #ifndef TENSORFLOW_LITE_EXPERIMENTAL_DELEGATES_NEURON_NEURON_IMPLEMENTATION_H_
 #define TENSORFLOW_LITE_EXPERIMENTAL_DELEGATES_NEURON_NEURON_IMPLEMENTATION_H_
 
+#include <android/hardware_buffer.h>
+#include <dlfcn.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "neuron/neuron_types.h"
 
+constexpr int32_t kMinSdkVersionForNeuron13 = 30;
+
 struct NeuronApi {
+  void* handle;
   bool neuron_exists;
-  int32_t neuron_sdk_version;
+  int32_t android_sdk_version;
+
+  ~NeuronApi() {
+    dlclose(handle);
+    handle = nullptr;
+  }
 
   // Neuron adapter api function types
 
   // Get the version of Neuron runtime library.
-  int (*Neuron_getVersion)(uint32_t* version);
+  int (*Neuron_getVersion)(NeuronRuntimeVersion* version);
 
   // Get the size of L1 memory in APU.
   int (*Neuron_getL1MemorySizeKb)(uint32_t* sizeKb);
@@ -186,8 +196,65 @@ struct NeuronApi {
   // consumed.
   int (*NeuronExecution_compute)(NeuronExecution* execution);
 
+  int (*NeuronExecution_startComputeWithDependencies)(
+      NeuronExecution* execution, const NeuronEvent* const* dependencies,
+      uint32_t num_dependencies, uint64_t duration, NeuronEvent** event);
+
+  int (*NeuronExecution_setBoostHint)(NeuronExecution* execution,
+                                      uint8_t boostValue);
+
+  int (*NeuronExecution_getOutputOperandRank)(NeuronExecution* execution,
+                                              int32_t index, uint32_t* rank);
+
+  int (*NeuronExecution_getOutputOperandDimensions)(NeuronExecution* execution,
+                                                    int32_t index,
+                                                    uint32_t* dimensions);
+
+  int (*NeuronExecution_setLoopTimeout)(NeuronExecution* execution,
+                                        uint64_t duration);
+
+  int (*NeuronCompilation_setOptimizationString)(
+      NeuronCompilation* compilation, const char* optimizationString);
+
+  int (*Neuron_getDeviceCount)(uint32_t* numDevices);
+
+  int (*Neuron_getDevice)(uint32_t devIndex, NeuronDevice** device);
+
+  int (*NeuronDevice_getName)(const NeuronDevice* device, const char** name);
+
+  int (*NeuronCompilation_createForDevices)(NeuronModel* model,
+                                            const NeuronDevice* const* devices,
+                                            uint32_t numDevices,
+                                            NeuronCompilation** compilation);
+
+  void (*NeuronEvent_free)(NeuronEvent* event);
+
+  int (*NeuronEvent_wait)(NeuronEvent* event);
+
+  int (*NeuronEvent_createFromSyncFenceFd)(int sync_fence_fd,
+                                           NeuronEvent** event);
+
+  int (*NeuronEvent_getSyncFenceFd)(const NeuronEvent* event,
+                                    int* sync_fence_fd);
+
+  int (*NeuronDevice_getExtensionSupport)(const char* extensionName,
+                                          bool* isExtensionSupported);
+
+  int (*NeuronModel_getExtensionOperandType)(
+      NeuronModel* model, const char* extensionName,
+      uint16_t operandCodeWithinExtension, int32_t* type);
+
+  int (*NeuronModel_getExtensionOperationType)(
+      NeuronModel* model, const char* extensionName,
+      uint16_t operationCodeWithinExtension, int32_t* type);
+
+  int (*NeuronModel_setOperandExtensionData)(NeuronModel* model, int32_t index,
+                                             const void* data, size_t length);
+
   // Create a shared memory region
   int (*ASharedMemory_create)(const char* name, size_t size);
+  int (*NeuronMemory_createFromAHardwareBuffer)(const AHardwareBuffer* ahwb,
+                                                NeuronMemory** memory);
 };
 
 /**

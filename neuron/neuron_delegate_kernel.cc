@@ -27,6 +27,7 @@
 #include "neuron/neuron_delegate_validation.h"
 #include "neuron/neuron_implementation.h"
 #include "neuron/neuron_types.h"
+#include "neuron/neuropilot_trace.h"
 #include "tensorflow/lite/builtin_ops.h"
 #include "tensorflow/lite/c/builtin_op_data.h"
 #include "tensorflow/lite/c/common.h"
@@ -34,6 +35,16 @@
 #include "tensorflow/lite/core/api/profiler.h"
 #include "tensorflow/lite/minimal_logging.h"
 #include "tensorflow/lite/util.h"
+
+/// M: NeuroPilot {@
+#include <farmhash.h>
+#include <inttypes.h>
+#include <string.h>
+
+#include <iostream>
+
+#include "neuron/mtk/mtk_utils.h"
+/// M: NeuroPilot @}
 
 namespace tflite {
 namespace neuron {
@@ -215,7 +226,7 @@ bool IsHybridOperator(const TfLiteContext* context, int builtin_code,
   }
 }
 
-constexpr size_t kDefaultByteAlignmentForNeuron = 16;
+constexpr size_t kDefaultByteAlignmentForNeuron = 128;
 
 static size_t getNumPaddingBytes(size_t byte_size) {
   size_t num_padding_bytes = 0;
@@ -226,23 +237,115 @@ static size_t getNumPaddingBytes(size_t byte_size) {
   return num_padding_bytes;
 }
 
+// Compute the hash of a TfLiteIntArray.
+uint64_t GetHash(const TfLiteIntArray* int_array, uint64_t combine_with = 0) {
+  constexpr auto kHashConst = 0x9e3779b97f4a7800ULL;
+  uint64_t result = combine_with;
+  for (auto i : TfLiteIntArrayView(int_array)) {
+    result = result ^ (i + kHashConst + (result << 10) + (result >> 4));
+  }
+  return result;
+}
+
+uint64_t GetInOutPutHash(TfLiteContext* context,
+                         const TfLiteIntArray* int_array) {
+  constexpr auto kHashConst = 0x9e3779b97f4a7800ULL;
+  uint64_t result = 0;
+  for (auto i : TfLiteIntArrayView(int_array)) {
+    result = result ^ (context->tensors[i].bytes + kHashConst + (result << 10) +
+                       (result >> 4));
+  }
+  return result;
+}
+
+TfLiteStatus GetAcceleratorDevice(const NeuronApi* neuron_api,
+                                  TfLiteContext* context,
+                                  const char* device_name,
+                                  NeuronDevice** result) {
+  if (!device_name) {
+    return kTfLiteError;
+  }
+  uint32_t num_devices = 0;
+  *result = nullptr;
+
+  RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
+      context, neuron_api->Neuron_getDeviceCount(&num_devices),
+      "getting device count");
+
+  for (uint32_t i = 0; i < num_devices; ++i) {
+    const char* name = nullptr;
+    NeuronDevice* device = nullptr;
+    RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
+        context, neuron_api->Neuron_getDevice(i, &device), "getting device");
+    RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
+        context, neuron_api->NeuronDevice_getName(device, &name),
+        "getting device name");
+    // TFLITE_LOG_PROD(tflite::TFLITE_LOG_INFO, "Got device name: %s", name);
+    if (std::string(device_name) == std::string(name)) {
+      *result = device;
+      return kTfLiteOk;
+    }
+  }
+
+  context->ReportError(context,
+                       "Could not find the specified Neuron accelerator: %s.",
+                       device_name);
+  return kTfLiteError;
+}
+
 }  // namespace
 
-NNMemory::NNMemory(const NeuronApi* /*neuronapi*/, const char* name,
-                   size_t size)
-    : neuronapi_(nullptr) {
+NNMemory::NNMemory(const NeuronApi* neuronapi, const char* name, size_t size,
+                   bool use_ahwb, bool use_cacheable_buffer) {
+  neuronapi_ = neuronapi;
   byte_size_ = size;
-  data_ptr_ = reinterpret_cast<uint8_t*>(malloc(size));
+  use_ahwb_ = use_ahwb;
+  if (use_ahwb && name && size > 0) {
+    uint64_t usage;
+    if (use_cacheable_buffer) {
+      TFLITE_LOG_PROD(tflite::TFLITE_LOG_INFO, "use cacheable ahardwarebuffer");
+      usage = AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN |
+              AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN;
+    } else {
+      TFLITE_LOG_PROD(tflite::TFLITE_LOG_INFO,
+                      "use non cacheable ahardwarebuffer");
+      usage = AHARDWAREBUFFER_USAGE_CPU_READ_RARELY |
+              AHARDWAREBUFFER_USAGE_CPU_WRITE_RARELY;
+    }
+    AHardwareBuffer_Desc desc{
+        .width = static_cast<uint32_t>(size),
+        .height = 1,
+        .layers = 1,
+        .format = AHARDWAREBUFFER_FORMAT_BLOB,
+        .usage = usage,
+        .stride = static_cast<uint32_t>(size),
+    };
+    if (AHardwareBuffer_allocate(&desc, &buffer_) == 0) {
+      neuronapi_->NeuronMemory_createFromAHardwareBuffer(buffer_,
+                                                         &nn_memory_handle_);
+      ion_memory_lock();
+    }
+  } else if (name && size > 0) {
+    byte_size_ = size;
+    data_ptr_ = reinterpret_cast<uint8_t*>(malloc(size));
+  }
 }
 
 NNMemory::~NNMemory() {
-  if (data_ptr_) {
+  ion_memory_unlock();
+  if (!use_ahwb_ && data_ptr_) {
     free(data_ptr_);
+  }
+  if (nn_memory_handle_) {
+    neuronapi_->NeuronMemory_free(nn_memory_handle_);
+  }
+  if (buffer_) {
+    AHardwareBuffer_release(buffer_);
   }
 }
 
 TfLiteStatus NeuronDelegateKernel::Map(TfLiteContext* context, int builtin_code,
-                                       int version, int neuron_sdk_version,
+                                       int version, int android_sdk_version,
                                        const NeuronOpMappingArgs& mapping_args,
                                        NeuronOperationType* nn_op_type) {
   auto add_zero_bias = [mapping_args](int input_id, int filter_id,
@@ -353,10 +456,25 @@ TfLiteStatus NeuronDelegateKernel::Map(TfLiteContext* context, int builtin_code,
       *nn_op_type = NEURON_DEPTHWISE_CONV_2D;
     } break;
     case kTfLiteBuiltinFullyConnected: {
+      const bool is_bias_present =
+          mapping_args.node->inputs->size == 3 &&
+          mapping_args.node->inputs->data[2] != kTfLiteOptionalTensor;
+      if (!is_bias_present) {
+        const int input_tensor_id =
+            mapping_args.node->inputs->data[/*kInputTensor*/ 0];
+        const int filter_tensor_id =
+            mapping_args.node->inputs->data[/*kWeightsTensor*/ 1];
+        const int num_units =
+            mapping_args.context->tensors[filter_tensor_id].dims->data[0];
+        add_zero_bias(input_tensor_id, filter_tensor_id, num_units);
+      }
       auto builtin = reinterpret_cast<TfLiteFullyConnectedParams*>(
           mapping_args.node->builtin_data);
       mapping_args.builder->AddScalarInt32Operand(builtin->activation);
       *nn_op_type = NEURON_FULLY_CONNECTED;
+    } break;
+    case kTfLiteBuiltinHardSwish: {
+      *nn_op_type = NEURON_HARD_SWISH;
     } break;
     case kTfLiteBuiltinSoftmax: {
       auto builtin = reinterpret_cast<TfLiteSoftmaxParams*>(
@@ -519,9 +637,6 @@ TfLiteStatus NeuronDelegateKernel::Map(TfLiteContext* context, int builtin_code,
     } break;
     case kTfLiteBuiltinLog: {
       *nn_op_type = NEURON_LOG;
-    } break;
-    case kTfLiteBuiltinRsqrt: {
-      *nn_op_type = NEURON_RSQRT;
     } break;
     case kTfLiteBuiltinPow: {
       *nn_op_type = NEURON_POW;
@@ -717,7 +832,32 @@ TfLiteStatus NeuronDelegateKernel::Map(TfLiteContext* context, int builtin_code,
     } break;
 
     case kTfLiteBuiltinQuantize: {
-      *nn_op_type = NEURON_QUANTIZE;
+      /*
+            // TODO(Code): Add AddDequantize here to avoid Neuron adapter error
+            // temporally Check if we can remove the AddDequantize latter, since
+            // Neuron adapter should support requantize directly
+      */
+      auto input_index = mapping_args.node->inputs->data[0];
+      auto output_index = mapping_args.node->outputs->data[0];
+      if (IsQuantized(mapping_args.context->tensors[input_index].type) &&
+          IsQuantized(mapping_args.context->tensors[output_index].type) &&
+          mapping_args.context->tensors[input_index].type !=
+              mapping_args.context->tensors[output_index].type) {
+        // Use requantize instead of quantize
+        const char* custom_name = "requantizemtk";
+        size_t oem_scalar_size = 0;
+        uint8_t* oem_scalar = nullptr;
+        oem_scalar_size =
+            ::tflite::mtk::PackOemScalarString(custom_name, &oem_scalar);
+        if (oem_scalar != nullptr) {
+          mapping_args.builder->AddScalarExtensionOperand(oem_scalar,
+                                                          oem_scalar_size);
+          free(oem_scalar);
+        }
+        mapping_args.builder->GetExtensionOperationType(nn_op_type);
+      } else {
+        *nn_op_type = NEURON_QUANTIZE;
+      }
     } break;
     case kTfLiteBuiltinReduceAny: {
       auto builtin = reinterpret_cast<TfLiteReducerParams*>(
@@ -749,6 +889,77 @@ TfLiteStatus NeuronDelegateKernel::Map(TfLiteContext* context, int builtin_code,
       mapping_args.builder->AddScalarBoolOperand(builtin->keep_dims);
       *nn_op_type = NEURON_REDUCE_SUM;
     } break;
+    case kTfLiteBuiltinSquaredDifference: {
+      const char* custom_name = "MTKEXT_SQUARED_DIFFERENCE";
+      size_t oem_scalar_size = 0;
+      uint8_t* oem_scalar = nullptr;
+      oem_scalar_size =
+          ::tflite::mtk::PackOemScalarString(custom_name, &oem_scalar);
+      if (oem_scalar != nullptr) {
+        mapping_args.builder->AddScalarExtensionOperand(oem_scalar,
+                                                        oem_scalar_size);
+        free(oem_scalar);
+      }
+      mapping_args.builder->GetExtensionOperationType(nn_op_type);
+    } break;
+    case kTfLiteBuiltinRsqrt: {
+      const char* custom_name = "MTKEXT_RSQRT";
+      size_t oem_scalar_size = 0;
+      uint8_t* oem_scalar = nullptr;
+      oem_scalar_size =
+          ::tflite::mtk::PackOemScalarString(custom_name, &oem_scalar);
+      if (oem_scalar != nullptr) {
+        mapping_args.builder->AddScalarExtensionOperand(oem_scalar,
+                                                        oem_scalar_size);
+        free(oem_scalar);
+      }
+      mapping_args.builder->GetExtensionOperationType(nn_op_type);
+    } break;
+    case kTfLiteBuiltinUnpack: {
+      const char* custom_name = "unpackmtk";
+      size_t oem_scalar_size = 0;
+      uint8_t* oem_scalar = nullptr;
+      auto builtin = reinterpret_cast<TfLiteUnpackParams*>(
+          mapping_args.node->builtin_data);
+      mapping_args.builder->AddScalarInt32Operand(builtin->axis);
+      oem_scalar_size =
+          ::tflite::mtk::PackOemScalarString(custom_name, &oem_scalar);
+      if (oem_scalar != nullptr) {
+        mapping_args.builder->AddScalarExtensionOperand(oem_scalar,
+                                                        oem_scalar_size);
+        free(oem_scalar);
+      }
+      mapping_args.builder->GetExtensionOperationType(nn_op_type);
+    } break;
+    case kTfLiteBuiltinReverseV2: {
+      const char* custom_name = "reversemtk";
+      size_t oem_scalar_size = 0;
+      uint8_t* oem_scalar = nullptr;
+      oem_scalar_size =
+          ::tflite::mtk::PackOemScalarString(custom_name, &oem_scalar);
+      if (oem_scalar != nullptr) {
+        mapping_args.builder->AddScalarExtensionOperand(oem_scalar,
+                                                        oem_scalar_size);
+        free(oem_scalar);
+      }
+      mapping_args.builder->GetExtensionOperationType(nn_op_type);
+    } break;
+    case kTfLiteBuiltinMirrorPad: {
+      const char* custom_name = "mirrorpadmtk";
+      size_t oem_scalar_size = 0;
+      uint8_t* oem_scalar = nullptr;
+      auto builtin = reinterpret_cast<TfLiteMirrorPaddingParams*>(
+          mapping_args.node->builtin_data);
+      mapping_args.builder->AddScalarInt32Operand(builtin->mode);
+      oem_scalar_size =
+          ::tflite::mtk::PackOemScalarString(custom_name, &oem_scalar);
+      if (oem_scalar != nullptr) {
+        mapping_args.builder->AddScalarExtensionOperand(oem_scalar,
+                                                        oem_scalar_size);
+        free(oem_scalar);
+      }
+      mapping_args.builder->GetExtensionOperationType(nn_op_type);
+    } break;
     default:
       // All other operators are not mapped.
       TFLITE_LOG_PROD(tflite::TFLITE_LOG_INFO, "Unmapped OP: %d", builtin_code);
@@ -774,6 +985,23 @@ TfLiteStatus NeuronDelegateKernel::Init(TfLiteContext* context,
         BuildGraph(context, params->input_tensors, params->output_tensors));
   }
 
+  // gen model token
+  nn_compilation_cache_token_.clear();
+  std::string bytes_count_str = std::to_string(context->tensors_size);
+  const char* model_token = bytes_count_str.c_str();
+  uint64_t token_parts[4];
+  token_parts[0] = ::util::Fingerprint64(model_token, std::strlen(model_token));
+  token_parts[1] = GetHash(params->nodes_to_replace);
+  token_parts[2] = GetHash(params->input_tensors);
+  token_parts[3] = GetHash(params->output_tensors);
+  std::vector<uint8_t> nnapi_cache_token(32, 0);
+  uint8_t* p = reinterpret_cast<uint8_t*>(token_parts);
+  for (int i = 0; i < 4 * sizeof(uint64_t); i++) {
+    nnapi_cache_token[i] = p[i];
+  }
+  nn_compilation_cache_token_ = nnapi_cache_token;
+
+  need_set_memory = true;
   initialised_ = true;
   return kTfLiteOk;
 }
@@ -789,11 +1017,47 @@ TfLiteStatus NeuronDelegateKernel::Prepare(TfLiteContext* context,
   }
 
   NeuronCompilation* compilation = nullptr;
-  RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
-      context,
-      neuronapi_->NeuronCompilation_create(nn_model_.get(), &compilation),
-      "creating Neuron compilation");
+  uint32_t num_devices = 0;
 
+  RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
+      context, neuronapi_->Neuron_getDeviceCount(&num_devices),
+      "getting device count");
+
+  NeuronDevice* device[num_devices];
+
+  int device_count = 0;
+  if (strlen(options_.accelerator_name) != 0) {
+    char* device_split_name =
+        std::strtok(const_cast<char*>(options_.accelerator_name), ",");
+    while (device_split_name) {
+      NeuronDevice* mtk_device = nullptr;
+      TFLITE_LOG_PROD(tflite::TFLITE_LOG_INFO,
+                      "NeuronCompilation_createForDevices: %s",
+                      device_split_name);
+      if (GetAcceleratorDevice(neuronapi_, context, device_split_name,
+                               &mtk_device) == kTfLiteOk) {
+        device[device_count] = mtk_device;
+        device_count++;
+      }
+      device_split_name = std::strtok(NULL, ",");
+    }
+  }
+  if (device_count) {
+    RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
+        context,
+        neuronapi_->NeuronCompilation_createForDevices(
+            nn_model_.get(), device, device_count, &compilation),
+        "creating Neuron compilation user specified device");
+  } else {
+    RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
+        context,
+        neuronapi_->NeuronCompilation_create(nn_model_.get(), &compilation),
+        "creating Neuron compilation");
+  }
+
+  if (options_.execution_preference == ExecutionPreference::kFastSingleAnswer) {
+    options_.execution_preference = ExecutionPreference::kTurboBoost;
+  }
   int result = neuronapi_->NeuronCompilation_setPreference(
       compilation, options_.execution_preference);
   TFLITE_LOG_PROD(tflite::TFLITE_LOG_INFO,
@@ -815,6 +1079,17 @@ TfLiteStatus NeuronDelegateKernel::Prepare(TfLiteContext* context,
   }
   RETURN_TFLITE_ERROR_IF_NEURON_ERROR(context, result,
                                       "setting compilation priority");
+
+  // Use optimization string first
+  if (neuronapi_->NeuronCompilation_setOptimizationString != nullptr) {
+    RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
+        context,
+        neuronapi_->NeuronCompilation_setOptimizationString(
+            compilation,
+            NNCompilationArgs::GetArgs(options_.execution_preference).c_str()),
+        "set optimization string");
+  }
+
   if (neuronapi_->NeuronCompilation_setOptimizationHint != nullptr) {
     RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
         context,
@@ -822,13 +1097,23 @@ TfLiteStatus NeuronDelegateKernel::Prepare(TfLiteContext* context,
             compilation, options_.optimization_hint),
         "set optimization hint");
   }
-  if (options_.cache_dir != nullptr && options_.model_token != nullptr) {
+  if (options_.cache_dir != nullptr && !nn_compilation_cache_token_.empty()) {
     RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
         context,
         neuronapi_->NeuronCompilation_setCaching(
             compilation, options_.cache_dir,
-            reinterpret_cast<const uint8_t*>(options_.model_token)),
-        "set optimization hint");
+            nn_compilation_cache_token_.data()),
+        "set caching");
+  }
+  if (strlen(options_.compile_options) != 0) {
+    TFLITE_LOG_PROD(tflite::TFLITE_LOG_INFO,
+                    "NeuronCompilation_setCompileOptions: %s",
+                    options_.compile_options);
+    RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
+        context,
+        neuronapi_->NeuronCompilation_setOptimizationString(
+            compilation, options_.compile_options),
+        "set compile options");
   }
   uint32_t apu_mem_size = 0;
   if (neuronapi_->Neuron_getL1MemorySizeKb(&apu_mem_size) == NEURON_NO_ERROR &&
@@ -840,10 +1125,11 @@ TfLiteStatus NeuronDelegateKernel::Prepare(TfLiteContext* context,
         "set apu l1 memory size");
   }
 
-  perf_handle_ = acquirePerformanceLock(perf_handle_, FAST_COMPILE_MODE, 2000);
+  if (performance_compilation_ == nullptr) {
+    performance_compilation_.reset(new PerformanceCompilation());
+  }
+  performance_compilation_->AcquirePerfLock();
   const int finish_result = neuronapi_->NeuronCompilation_finish(compilation);
-  releasePerformanceLock(perf_handle_);
-  perf_handle_ = 0;
   if (finish_result != NEURON_NO_ERROR) {
     neuronapi_->NeuronCompilation_free(compilation);
     compilation = nullptr;
@@ -853,11 +1139,24 @@ TfLiteStatus NeuronDelegateKernel::Prepare(TfLiteContext* context,
                                       "completing Neuron compilation");
   nn_compilation_.reset(compilation);
 
+#ifdef NEURON_REUSABLE_EXECUTION
+  NeuronExecution* execution = nullptr;
+  RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
+      context,
+      neuronapi_->NeuronExecution_create(nn_compilation_.get(), &execution),
+      "creating Neuron execution");
+  nn_execution_.reset(execution);
+#endif
+  performance_compilation_.reset();
   return kTfLiteOk;
 }
 
 TfLiteStatus NeuronDelegateKernel::Eval(TfLiteContext* context,
                                         TfLiteNode* node) {
+  MTK_ATRACE_CALL();
+#ifdef NEURON_REUSABLE_EXECUTION
+  NeuronExecution* execution = nn_execution_.get();
+#else
   NeuronExecution* execution = nullptr;
   RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
       context,
@@ -865,7 +1164,7 @@ TfLiteStatus NeuronDelegateKernel::Eval(TfLiteContext* context,
       "creating Neuron execution");
   std::unique_ptr<NeuronExecution, NNFreeExecution> execution_unique_ptr(
       execution, NNFreeExecution(neuronapi_));
-
+#endif
   // Set the input tensor buffers. Note: we access tflite tensors using
   // absolute indices but Neuron indices inputs by relative indices.
   int relative_input_index = 0;
@@ -875,6 +1174,7 @@ TfLiteStatus NeuronDelegateKernel::Eval(TfLiteContext* context,
       continue;
     }
 
+    NeuronOperandType* input_nn_operand_type_ptr = nullptr;
     TfLiteTensor* tensor = &context->tensors[absolute_input_index];
     if (tensor->allocation_type != kTfLiteMmapRo) {
       TfLiteType nn_type_equivalent =
@@ -915,22 +1215,46 @@ TfLiteStatus NeuronDelegateKernel::Eval(TfLiteContext* context,
         TF_LITE_ENSURE_OK(
             context, GetSizeOfType(context, nn_type_equivalent, &type_size));
         tensor_size = NumElements(tensor) * type_size;
-        RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
-            context,
-            neuronapi_->NeuronExecution_setInput(execution,
-                                                 relative_input_index, nullptr,
-                                                 input_ptr, tensor_size),
-            "associating Neuron execution input with a memory raw");
+        if (options_.use_ahwb) {
+          if (need_set_memory) {
+            RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
+                context,
+                neuronapi_->NeuronExecution_setInputFromMemory(
+                    execution, relative_input_index, input_nn_operand_type_ptr,
+                    nn_input_memory_->get_handle(), input_offset, tensor_size),
+                "associating NNAPI execution input with a memory object");
+          }
+        } else {
+          RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
+              context,
+              neuronapi_->NeuronExecution_setInput(
+                  execution, relative_input_index, input_nn_operand_type_ptr,
+                  input_ptr, tensor_size),
+              "associating NNAPI execution input with a memory object");
+        }
       } else {
         // copy data to pre-allocated shared memory.
         memcpy(nn_input_memory_->get_data_ptr() + input_offset,
                tensor->data.raw, tensor->bytes);
-        RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
-            context,
-            neuronapi_->NeuronExecution_setInput(
-                execution, relative_input_index, nullptr,
-                nn_input_memory_->get_data_ptr() + input_offset, tensor->bytes),
-            "associating Neuron execution input with a memory raw");
+        if (options_.use_ahwb) {
+          if (need_set_memory) {
+            RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
+                context,
+                neuronapi_->NeuronExecution_setInputFromMemory(
+                    execution, relative_input_index, input_nn_operand_type_ptr,
+                    nn_input_memory_->get_handle(), input_offset,
+                    tensor->bytes),
+                "associating NNAPI execution input with a memory object");
+          }
+        } else {
+          RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
+              context,
+              neuronapi_->NeuronExecution_setInput(
+                  execution, relative_input_index, input_nn_operand_type_ptr,
+                  nn_input_memory_->get_data_ptr() + input_offset,
+                  tensor->bytes),
+              "associating NNAPI execution input with a memory object");
+        }
         tensor_size = tensor->bytes;
       }
 
@@ -950,13 +1274,25 @@ TfLiteStatus NeuronDelegateKernel::Eval(TfLiteContext* context,
       continue;
     }
 
+    NeuronOperandType* output_nn_operand_type_ptr = nullptr;
     TfLiteTensor* tensor = &context->tensors[output_index];
-    RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
-        context,
-        neuronapi_->NeuronExecution_setOutput(
-            execution, relative_output_index, nullptr,
-            nn_output_memory_->get_data_ptr() + output_offset, tensor->bytes),
-        "associating Neuron execution output to a memory object");
+    if (options_.use_ahwb) {
+      if (need_set_memory) {
+        RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
+            context,
+            neuronapi_->NeuronExecution_setOutputFromMemory(
+                execution, relative_output_index, output_nn_operand_type_ptr,
+                nn_output_memory_->get_handle(), output_offset, tensor->bytes),
+            "associating NNAPI execution output to a memory object");
+      }
+    } else {
+      RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
+          context,
+          neuronapi_->NeuronExecution_setOutput(
+              execution, relative_output_index, output_nn_operand_type_ptr,
+              nn_output_memory_->get_data_ptr() + output_offset, tensor->bytes),
+          "associating NNAPI execution output to a memory object");
+    }
 
     output_offset += tensor->bytes;
     output_offset += getNumPaddingBytes(tensor->bytes);
@@ -980,15 +1316,27 @@ TfLiteStatus NeuronDelegateKernel::Eval(TfLiteContext* context,
     relative_output_index++;
   }
 
-  // Use synchronous execution
-  uint32_t boost_duration =
-      options_.boost_duration == 0 ? 2000 : options_.boost_duration;
-  PERFORMANCE_MODE_E performance_mode = FAST_SINGLE_ANSWER_MODE;
-  if (options_.execution_preference == ExecutionPreference::kSustainedSpeed) {
-    performance_mode = SUSTAINED_SPEED_MODE;
+  uint32_t boost_duration_default;
+  if (options_.execution_preference == ExecutionPreference::kFastSingleAnswer ||
+      options_.execution_preference == ExecutionPreference::kTurboBoost) {
+    boost_duration_default = 2000;
+  } else {
+    boost_duration_default = 10;
+    RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
+        context, neuronapi_->NeuronExecution_setBoostHint(execution, 80),
+        "set boost hint");
   }
-  perf_handle_ =
-      acquirePerformanceLock(perf_handle_, performance_mode, boost_duration);
+
+  // Use synchronous execution
+  uint32_t boost_duration = options_.boost_duration == 0
+                                ? boost_duration_default
+                                : options_.boost_duration;
+  ;
+  if (performance_execution_ == nullptr) {
+    performance_execution_.reset(
+        new PerformanceExecution(options_.execution_preference));
+  }
+  performance_execution_->AcquirePerfLock(boost_duration);
 
   RETURN_TFLITE_ERROR_IF_NEURON_ERROR(
       context, neuronapi_->NeuronExecution_compute(execution),
@@ -1017,6 +1365,7 @@ TfLiteStatus NeuronDelegateKernel::Eval(TfLiteContext* context,
     output_offset += tensor->bytes;
     output_offset += getNumPaddingBytes(tensor->bytes);
   }
+  need_set_memory = false;
 
   // copy output of all output tensors in feedback_loops_ into the
   // associated input
@@ -1099,15 +1448,46 @@ TfLiteStatus NeuronDelegateKernel::AddOpsAndTensors(TfLiteContext* context) {
 
     // Delegate PACK by lowering it into CONCAT + RESHAPE.
     if (reg->builtin_code == kTfLiteBuiltinPack) {
-      TF_LITE_ENSURE_STATUS(
-          builder.TransformPackIntoSupportedOps(node, reg));
+      TF_LITE_ENSURE_STATUS(builder.TransformPackIntoSupportedOps(node, reg));
       continue;
+    }
+    // Set same quantization params of input & output tensors for invalid
+    // MirrorPad
+    if (reg->builtin_code == kTfLiteBuiltinMirrorPad) {
+      auto input_index = node->inputs->data[0];
+      auto output_index = node->outputs->data[0];
+      TfLiteTensor input_tensor = context->tensors[input_index];
+      TfLiteTensor& output_tensor = context->tensors[output_index];
+      if (IsQuantized(input_tensor.type) && IsQuantized(output_tensor.type)) {
+        if (input_tensor.quantization.type == kTfLiteAffineQuantization) {
+          auto* src_quantization = reinterpret_cast<TfLiteAffineQuantization*>(
+              input_tensor.quantization.params);
+          const size_t num_scales = src_quantization->scale->size;
+          auto* affine_quantization =
+              reinterpret_cast<TfLiteAffineQuantization*>(
+                  malloc(sizeof(TfLiteAffineQuantization)));
+          affine_quantization->scale = TfLiteFloatArrayCreate(num_scales);
+          affine_quantization->zero_point = TfLiteIntArrayCreate(num_scales);
+          for (size_t i = 0; i < num_scales; ++i) {
+            affine_quantization->scale->data[i] =
+                src_quantization->scale->data[i];
+            affine_quantization->zero_point->data[i] =
+                src_quantization->zero_point->data[i];
+          }
+          affine_quantization->quantized_dimension =
+              src_quantization->quantized_dimension;
+          output_tensor.quantization.params =
+              reinterpret_cast<void*>(affine_quantization);
+          output_tensor.quantization.type = input_tensor.quantization.type;
+          output_tensor.params.scale = input_tensor.params.scale;
+          output_tensor.params.zero_point = input_tensor.params.zero_point;
+        }
+      }
     }
 
     const bool hybrid_op = IsHybridOperator(context, reg->builtin_code, node);
     const bool scalar_as_tensor = IsScalarInputSupported(reg->builtin_code);
-    const bool need_int8_conversion =
-        NeedInt8Conversion(context, reg->builtin_code, node);
+    const bool need_int8_conversion = false;
     const bool use_int8_asymm_signed = true;
 
     int input_tensor_flags = 0;
@@ -1117,19 +1497,24 @@ TfLiteStatus NeuronDelegateKernel::AddOpsAndTensors(TfLiteContext* context) {
     if (use_int8_asymm_signed) {
       input_tensor_flags |= NN_TENSOR_FLAG_USE_INT8_ASYMM_SIGNED;
     }
-
+#ifdef LOWERING_HARD_SWISH
     // h_swish will be lowered into supported Neuron operations.
     if (reg->builtin_code == kTfLiteBuiltinHardSwish) {
       builder.AddHardSwish(node->inputs->data[0], node->outputs->data[0],
                            need_int8_conversion);
       continue;
     }
-
+#endif
     // Map inputs to Neuron tensor indices.
     for (int input_pos = 0; input_pos < node->inputs->size; ++input_pos) {
       if (reg->builtin_code == kTfLiteBuiltinTransposeConv) {
         // Everything is added during Map since input tensors
         // have different order.
+        continue;
+      }
+      if (reg->builtin_code == kTfLiteBuiltinFullyConnected &&
+          node->inputs->data[input_pos] == kTfLiteOptionalTensor) {
+        // skip optional bias and handle it during mapping
         continue;
       }
       const auto input_index = node->inputs->data[input_pos];
@@ -1309,13 +1694,13 @@ TfLiteStatus NeuronDelegateKernel::AddOpsAndTensors(TfLiteContext* context) {
 
     // If we have target accelerators the target SDK version might be
     // different than the current android version.
-    int neuron_sdk_version = neuronapi_->neuron_sdk_version;
+    int android_sdk_version = neuronapi_->android_sdk_version;
 
     // Get op type and operands
     // Fails if the Validate function failed
     NeuronOperationType nn_op_type;
     TF_LITE_ENSURE_STATUS(Map(context, reg->builtin_code, reg->version,
-                              neuron_sdk_version,
+                              android_sdk_version,
                               {context, &builder, node, &model_state_outputs_,
                                &model_state_tfl_inputs_, &feedback_loops_},
                               &nn_op_type));
@@ -1459,10 +1844,12 @@ TfLiteStatus NeuronDelegateKernel::BuildGraph(
       "finalizing the model");
   TFLITE_LOG_PROD(tflite::TFLITE_LOG_INFO, "NeuronModel_finish");
   // Create shared memory pool for inputs and outputs.
-  nn_input_memory_.reset(
-      new NNMemory(neuronapi_, "input_pool", total_input_byte_size));
+  nn_input_memory_.reset(new NNMemory(neuronapi_, "input_pool",
+                                      total_input_byte_size, options_.use_ahwb,
+                                      options_.use_cacheable_buffer));
   nn_output_memory_.reset(
-      new NNMemory(neuronapi_, "output_pool", total_output_byte_size));
+      new NNMemory(neuronapi_, "output_pool", total_output_byte_size,
+                   options_.use_ahwb, options_.use_cacheable_buffer));
 
   TFLITE_LOG_PROD(tflite::TFLITE_LOG_INFO, "BuildGraph done");
   return kTfLiteOk;

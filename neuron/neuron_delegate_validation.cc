@@ -1,24 +1,24 @@
 /*
-* Copyright (C) 2021 MediaTek Inc., this file is modified on 02/26/2021
-* by MediaTek Inc. based on MIT License .
-* Permission is hereby granted, free of charge, to any person obtaining a copy
-* of this software and associated documentation files (the ""Software""), to
-* deal in the Software without restriction, including without limitation the
-* rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
-* sell copies of the Software, and to permit persons to whom the Software is
-* furnished to do so, subject to the following conditions:
-*
-* The above copyright notice and this permission notice shall be included in all
-* copies or substantial portions of the Software.
-*
-* THE SOFTWARE IS PROVIDED ""AS IS"", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-* SOFTWARE.
-*/
+ * Copyright (C) 2021 MediaTek Inc., this file is modified on 02/26/2021
+ * by MediaTek Inc. based on MIT License .
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the ""Software""), to
+ * deal in the Software without restriction, including without limitation the
+ * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED ""AS IS"", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
 
 #include "neuron/neuron_delegate_validation.h"
 
@@ -150,6 +150,26 @@ bool ExpectIsFloatOrQuant8Operator(const TfLiteContext* context,
                 "Input should be Float or Quant8", val_ctx);
 }
 
+bool IsFloatQuantizedOrInt32(TfLiteType type) {
+  switch (type) {
+    case kTfLiteFloat32:
+    case kTfLiteUInt8:
+    case kTfLiteInt8:
+    case kTfLiteInt32:
+      return true;
+    default:
+      return false;
+  }
+}
+bool ExpectIsFloatQuant8OrInt32Operator(const TfLiteContext* context,
+                                        const TfLiteNode* node,
+                                        OpValidationContext* val_ctx) {
+  const auto input_type = context->tensors[node->inputs->data[0]].type;
+  return Expect(IsFloatQuantizedOrInt32(input_type),
+                NeuronValidationFailureType::kUnsupportedInputType,
+                "Input should be Float, Quant8, or Int32", val_ctx);
+}
+
 // When using Neuron, the condition below must be true
 // for quantized versions of the following ops:
 // * CONV_2D
@@ -258,7 +278,7 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
     } break;
     case kTfLiteBuiltinReshape: {
       ExpectOpVersion(version, 1, &val_ctx);
-      ExpectIsFloatOrQuant8Operator(context, node, &val_ctx);
+      ExpectIsFloatQuant8OrInt32Operator(context, node, &val_ctx);
       if (node->inputs->size >= 2) {
         Expect(context->tensors[node->inputs->data[1]].allocation_type ==
                    kTfLiteMmapRo,
@@ -395,7 +415,6 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
     case kTfLiteBuiltinAbs:
     case kTfLiteBuiltinExp:
     case kTfLiteBuiltinLog:
-    case kTfLiteBuiltinRsqrt:
     case kTfLiteBuiltinPow: {
       ExpectOpVersion(version, 1, &val_ctx);
       const auto input_type = context->tensors[node->inputs->data[0]].type;
@@ -550,8 +569,9 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
       const auto input_type = context->tensors[node->inputs->data[0]].type;
       const auto& positions = context->tensors[node->inputs->data[1]];
 
-      EXPECT_INPUT_TYPE_IN(input_type, kTfLiteFloat32, kTfLiteFloat16,
-                           kTfLiteInt32, kTfLiteUInt8, kTfLiteInt8);
+      // TODO: neuropilot workaround for gather(remove float32 support)
+      EXPECT_INPUT_TYPE_IN(input_type, kTfLiteFloat16, kTfLiteInt32,
+                           kTfLiteUInt8, kTfLiteInt8);
 
       Expect(positions.allocation_type == kTfLiteMmapRo,
              NeuronValidationFailureType::kUnsupportedInputType,
@@ -603,6 +623,12 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
     case kTfLiteBuiltinReduceMin:
     case kTfLiteBuiltinReduceMax: {
       ExpectOpVersion(version, 2, &val_ctx);
+      const TfLiteTensor& axis_tensor = context->tensors[node->inputs->data[1]];
+      if (axis_tensor.dims->size == 0) {
+        Expect(axis_tensor.dims->size > 0,
+               NeuronValidationFailureType::kUnsupportedOperator,
+               "axis dimension size should be > 0.", &val_ctx);
+      }
     } break;
     case kTfLiteBuiltinDepthToSpace: {
       const TfLiteType input_type =
@@ -613,6 +639,12 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
     case kTfLiteBuiltinReduceProd:
     case kTfLiteBuiltinSum: {
       ExpectOpVersion(version, 1, &val_ctx);
+      const TfLiteTensor& axis_tensor = context->tensors[node->inputs->data[1]];
+      if (axis_tensor.dims->size == 0) {
+        Expect(axis_tensor.dims->size > 0,
+               NeuronValidationFailureType::kUnsupportedOperator,
+               "axis dimension size should be > 0.", &val_ctx);
+      }
     } break;
     case kTfLiteBuiltinElu: {
       ExpectOpVersion(version, 1, &val_ctx);
@@ -670,6 +702,13 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
                      context->tensors[node->inputs->data[0]].dims->size,
              NeuronValidationFailureType::kUnsupportedOperandValue,
              "Neuron does not support axis being the last dimension", &val_ctx);
+    } break;
+    case kTfLiteBuiltinSquaredDifference:
+    case kTfLiteBuiltinRsqrt:
+    case kTfLiteBuiltinMirrorPad:
+    case kTfLiteBuiltinUnpack:
+    case kTfLiteBuiltinReverseV2: {
+      // Use BuiltinOP as MTK EXT OP
     } break;
     default:
       // All other operators are not mapped.

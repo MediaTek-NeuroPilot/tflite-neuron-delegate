@@ -1,28 +1,29 @@
 /*
-* Copyright (C) 2021 MediaTek Inc., this file is modified on 02/26/2021
-* by MediaTek Inc. based on MIT License .
-* Permission is hereby granted, free of charge, to any person obtaining a copy
-* of this software and associated documentation files (the ""Software""), to
-* deal in the Software without restriction, including without limitation the
-* rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
-* sell copies of the Software, and to permit persons to whom the Software is
-* furnished to do so, subject to the following conditions:
-*
-* The above copyright notice and this permission notice shall be included in all
-* copies or substantial portions of the Software.
-*
-* THE SOFTWARE IS PROVIDED ""AS IS"", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-* SOFTWARE.
-*/
+ * Copyright (C) 2021 MediaTek Inc., this file is modified on 02/26/2021
+ * by MediaTek Inc. based on MIT License .
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the ""Software""), to
+ * deal in the Software without restriction, including without limitation the
+ * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED ""AS IS"", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
 
 #ifndef TENSORFLOW_LITE_EXPERIMENTAL_DELEGATES_NEURON_NEURON_TYPES_H_
 #define TENSORFLOW_LITE_EXPERIMENTAL_DELEGATES_NEURON_NEURON_TYPES_H_
 
+#include <android/hardware_buffer.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -38,27 +39,22 @@ typedef struct NeuronCompilation NeuronCompilation;
 // machine learning model to a set of inputs.
 typedef struct NeuronExecution NeuronExecution;
 
-/**
- * NeuronMemory is an opaque type that represents memory.
- *
- * This type is used to represent shared memory, memory mapped files,
- * and similar memories.
- *
- * By using shared memory, a program can efficiently communicate to the
- * runtime and drivers the tensors that define a model. See
- * {@link ANeuralNetworksModel_setOperandValueFromMemory}. An application
- * should typically create one shared memory object that contains every tensor
- * needed to define a model. {@link ANeuralNetworksMemory_createFromFd} can be
- * used to create shared memory from a file handle. {@link
- * ANeuralNetworksMemory_createShared} can be used to directly created shared
- * memory.
- *
- * Memory objects can also be used to specify the input and output arguments of
- * an execution. See {@link ANeuralNetworksExecution_setInputFromMemory}
- * and {@link ANeuralNetworksExecution_setOutputFromMemory}.
- */
-// TBD: Add this implementation in Neuron Adapter
+// NeuronDevice is an opaque type that represents a device. This type is used to
+// query basic properties and supported operations of the corresponding device,
+// and control which device(s) a model is to be run on.
+typedef struct NeuronDevice NeuronDevice;
+
+// NeuronMemory is an opaque type that represents memory. This type is used to
+// represent shared memory, memory mapped files, and similar memories. It is the
+// application's responsibility to ensure that there are no uses of the memory
+// after calling NeuronMemory_free. This includes the execution which references
+// this memory because of a call to NeuronExecution_setInputFromMemory or
+// NeuronExecution_setOutputFromMemory.
 typedef struct NeuronMemory NeuronMemory;
+
+// NeuronEvent is an opaque type that represents an event that will be signaled
+// once an execution completes.
+typedef struct NeuronEvent NeuronEvent;
 
 // Result codes.
 typedef enum {
@@ -248,7 +244,9 @@ typedef enum {
   NEURON_UNIDIRECTIONAL_SEQUENCE_LSTM = 92,
   NEURON_UNIDIRECTIONAL_SEQUENCE_RNN = 93,
   NEURON_RESIZE_NEAREST_NEIGHBOR = 94,
+  NEURON_HARD_SWISH = 99,
   NEURON_NUMBER_OF_OPERATIONS,
+  NEURON_OEM_OPERATION = 10000,
 } NeuronOperationType;
 
 // Fused activation function types.
@@ -270,10 +268,19 @@ typedef enum {
   NEURON_PRIORITY_DEFAULT = NEURON_PRIORITY_MEDIUM,
 } PriorityCode;
 
+/**
+ * The structure to represent the neuron version.
+ */
+typedef struct {
+  uint8_t major;  ///< major version
+  uint8_t minor;  ///< minor version
+  uint8_t patch;  ///< patch version
+} NeuronRuntimeVersion;
+
 // Neuron adapter api function types
 
 // Get the version of Neuron runtime library.
-typedef int (*Neuron_getVersion_fn)(uint32_t* version);
+typedef int (*Neuron_getVersion_fn)(NeuronRuntimeVersion* version);
 
 // Get the size of L1 memory in APU.
 typedef int (*Neuron_getL1MemorySizeKb_fn)(uint32_t* sizeKb);
@@ -424,7 +431,66 @@ typedef int (*NeuronExecution_setOutputFromMemory_fn)(
 // consumed.
 typedef int (*NeuronExecution_compute_fn)(NeuronExecution* execution);
 
+typedef int (*NeuronExecution_startComputeWithDependencies_fn)(
+    NeuronExecution* execution, const NeuronEvent* const* dependencies,
+    uint32_t num_dependencies, uint64_t duration, NeuronEvent** event);
+
+typedef int (*NeuronExecution_setBoostHint_fn)(NeuronExecution* execution,
+                                               uint8_t boostValue);
+
+typedef int (*NeuronExecution_getOutputOperandRank_fn)(
+    NeuronExecution* execution, int32_t index, uint32_t* rank);
+
+typedef int (*NeuronExecution_getOutputOperandDimensions_fn)(
+    NeuronExecution* execution, int32_t index, uint32_t* dimensions);
+
+typedef int (*NeuronExecution_setLoopTimeout_fn)(NeuronExecution* execution,
+                                                 uint64_t duration);
+
+typedef int (*NeuronCompilation_setOptimizationString_fn)(
+    NeuronCompilation* compilation, const char* optimizationString);
+
+typedef int (*Neuron_getDeviceCount_fn)(uint32_t* numDevices);
+
+typedef int (*Neuron_getDevice_fn)(uint32_t devIndex, NeuronDevice** device);
+
+typedef int (*NeuronDevice_getName_fn)(const NeuronDevice* device,
+                                       const char** name);
+
+typedef int (*NeuronCompilation_createForDevices_fn)(
+    NeuronModel* model, const NeuronDevice* const* devices, uint32_t numDevices,
+    NeuronCompilation** compilation);
+
+typedef void (*NeuronEvent_free_fn)(NeuronEvent* event);
+
+typedef int (*NeuronEvent_wait_fn)(NeuronEvent* event);
+
+typedef int (*NeuronEvent_createFromSyncFenceFd_fn)(int sync_fence_fd,
+                                                    NeuronEvent** event);
+
+typedef int (*NeuronEvent_getSyncFenceFd_fn)(const NeuronEvent* event,
+                                             int* sync_fence_fd);
+
+typedef int (*NeuronDevice_getExtensionSupport_fn)(const char* extensionName,
+                                                   bool* isExtensionSupported);
+
+typedef int (*NeuronModel_getExtensionOperandType_fn)(
+    NeuronModel* model, const char* extensionName,
+    uint16_t operandCodeWithinExtension, int32_t* type);
+
+typedef int (*NeuronModel_getExtensionOperationType_fn)(
+    NeuronModel* model, const char* extensionName,
+    uint16_t operationCodeWithinExtension, int32_t* type);
+
+typedef int (*NeuronModel_setOperandExtensionData_fn)(NeuronModel* model,
+                                                      int32_t index,
+                                                      const void* data,
+                                                      size_t length);
+
 // Create a shared memory region
 typedef int (*ASharedMemory_create_fn)(const char* name, size_t size);
+
+typedef int (*NeuronMemory_createFromAHardwareBuffer_fn)(
+    const AHardwareBuffer* ahwb, NeuronMemory** memory);
 
 #endif  // TENSORFLOW_LITE_EXPERIMENTAL_DELEGATES_NEURON_NEURON_TYPES_H_

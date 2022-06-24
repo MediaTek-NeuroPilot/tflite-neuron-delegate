@@ -29,6 +29,7 @@ cc_library(
     hdrs = [
         "neuron_implementation.h",
     ],
+    linkopts = android_linkopts(),
     tags = [
         "manual",
         "nobuilder",
@@ -39,22 +40,39 @@ cc_library(
 )
 
 cc_library(
+    name = "neuron_performance",
+    srcs = [
+        "lib/libneuron_performance.a",
+    ],
+    hdrs = ["neuron_performance.h"],
+)
+
+cc_library(
     name = "neuron_delegate_kernel",
     srcs = [
+        "mtk/mtk_utils.cc",
+        "mtk/mtk_utils.h",
         "neuron_delegate.h",
         "neuron_delegate_builder.h",
         "neuron_delegate_kernel.cc",
+        "neuron_nnapi_delegate_kernel.h",
+        "neuron_performance.h",
+        "neuropilot_trace.h",
     ],
     hdrs = [
         "APUWareUtilsApi.h",
         "neuron_delegate_kernel.h",
     ],
+    linkopts = android_linkopts(),
     deps = [
         "neuron_delegate_utils",
         "neuron_delegate_validation",
         "neuron_implementation",
+        ":neuron_performance",
+        "@farmhash_archive//:farmhash",
         "@org_tensorflow//tensorflow/lite/c:common",
         "@org_tensorflow//tensorflow/lite/core/api",
+        "@org_tensorflow//tensorflow/lite/delegates/nnapi:nnapi_delegate",
         "@org_tensorflow//tensorflow/lite/delegates/utils:simple_delegate",
         "@org_tensorflow//tensorflow/lite/kernels:kernel_util",
     ],

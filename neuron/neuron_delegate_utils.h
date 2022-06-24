@@ -1,24 +1,24 @@
 /*
-* Copyright (C) 2021 MediaTek Inc., this file is modified on 02/26/2021
-* by MediaTek Inc. based on MIT License .
-* Permission is hereby granted, free of charge, to any person obtaining a copy
-* of this software and associated documentation files (the ""Software""), to
-* deal in the Software without restriction, including without limitation the
-* rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
-* sell copies of the Software, and to permit persons to whom the Software is
-* furnished to do so, subject to the following conditions:
-*
-* The above copyright notice and this permission notice shall be included in all
-* copies or substantial portions of the Software.
-*
-* THE SOFTWARE IS PROVIDED ""AS IS"", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-* SOFTWARE.
-*/
+ * Copyright (C) 2021 MediaTek Inc., this file is modified on 02/26/2021
+ * by MediaTek Inc. based on MIT License .
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the ""Software""), to
+ * deal in the Software without restriction, including without limitation the
+ * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED ""AS IS"", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
 
 #ifndef TENSORFLOW_LITE_EXPERIMENTAL_DELEGATES_NEURON_NEURON_UTILS_H_
 #define TENSORFLOW_LITE_EXPERIMENTAL_DELEGATES_NEURON_NEURON_UTILS_H_
@@ -31,6 +31,9 @@
 #include "neuron/neuron_types.h"
 #include "tensorflow/lite/c/common.h"
 #include "tensorflow/lite/context_util.h"
+#ifdef __ANDROID__
+#include <sys/system_properties.h>
+#endif
 
 namespace tflite {
 namespace neuron {
@@ -47,6 +50,26 @@ namespace neuron {
       return kTfLiteError;                                                    \
     }                                                                         \
   } while (0)
+
+#define RETURN_TFLITE_ERROR_IF_ION_ERROR(code) \
+  do {                                         \
+    const auto _code = (code);                 \
+    if (_code != 0) {                          \
+      return kTfLiteError;                     \
+    }                                          \
+  } while (0)
+
+inline std::string GetPropertyValue(const std::string& property) {
+#ifdef __ANDROID__
+  char value[PROP_VALUE_MAX];
+  if (0 == __system_property_get(property.c_str(), value)) {
+    return std::string();
+  }
+  return std::string(value);
+#else   // !__ANDROID__
+  return std::string();
+#endif  // __ANDROID__
+}
 
 inline std::string NeuronErrorDescription(int error_code) {
   switch (error_code) {
