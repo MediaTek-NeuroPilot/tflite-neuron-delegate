@@ -10,6 +10,7 @@ def android_linkopts():
             "-lm",  # some builtin ops, e.g., tanh, need -lm
             # Hexagon delegate libraries should be in /data/local/tmp
             "-Wl,--rpath=/data/local/tmp/",
+            "-landroid",  # for Ahardwarebuffer
         ],
         "//conditions:default": [],
     })

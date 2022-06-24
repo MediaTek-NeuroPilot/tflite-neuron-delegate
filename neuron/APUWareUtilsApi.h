@@ -25,7 +25,6 @@
 #include <android/log.h>
 #include <dlfcn.h>
 
-#include <cstdlib>
 #include <memory>
 #include <utility>
 
@@ -48,8 +47,13 @@ typedef enum {
   __android_log_print(ANDROID_LOG_ERROR, "APUWARELIB", format "\n", \
                       ##__VA_ARGS__);
 
-#define LOAD_APUWARE_UTILS_FUNCTION(name) \
-  static name##_fn fn =                   \
+#define LOAD_APUWARE_UTILS_FUNCTION(name)                      \
+  if (!loadApuWareUtilsLibrary("libapuwareutils_v2.mtk.so")) { \
+    if (!loadApuWareUtilsLibrary("libapuwareutils.mtk.so")) {  \
+      return 0;                                                \
+    }                                                          \
+  }                                                            \
+  static name##_fn fn =                                        \
       reinterpret_cast<name##_fn>(loadApuWareUtilsFunction(#name));
 
 #define EXECUTE_APUWARE_UTILS_FUNCTION(...) \
@@ -57,7 +61,17 @@ typedef enum {
     fn(__VA_ARGS__);                        \
   }
 
-#define EXECUTE_APUWARE_UTILS_FUNCTION_RETURN(...) return fn(__VA_ARGS__);
+#define EXECUTE_APUWARE_UTILS_FUNCTION_RETURN(...) \
+  if (fn != NULL) {                                \
+    return fn(__VA_ARGS__);                        \
+  }                                                \
+  return nullptr;
+
+#define EXECUTE_APUWARE_UTILS_FUNCTION_RETURN_INT(...) \
+  if (fn != NULL) {                                    \
+    return fn(__VA_ARGS__);                            \
+  }                                                    \
+  return 0;
 
 static void* sAPUWareUtilsLibHandle;
 
@@ -111,6 +125,11 @@ inline void* loadApuWareUtilsFunction(const char* name) {
 typedef int32_t (*acquirePerformanceLockInternal_fn)(
     int32_t hdl, PERFORMANCE_MODE_E perfMode, uint32_t duration);
 typedef bool (*releasePerformanceLockInternal_fn)(int32_t hdl);
+typedef int32_t (*acquirePerfParamsLockInternal_fn)(int32_t hdl,
+                                                    uint32_t duration,
+                                                    int32_t boostList[],
+                                                    uint32_t numParams);
+typedef const uint8_t* (*queryHwConfigInternal_fn)(uint32_t* length);
 
 #ifdef __cplusplus
 extern "C" {
@@ -119,12 +138,24 @@ extern "C" {
 inline int32_t acquirePerformanceLock(int32_t hdl, PERFORMANCE_MODE_E perfMode,
                                       uint32_t duration) {
   LOAD_APUWARE_UTILS_FUNCTION(acquirePerformanceLockInternal);
-  EXECUTE_APUWARE_UTILS_FUNCTION_RETURN(hdl, perfMode, duration);
+  EXECUTE_APUWARE_UTILS_FUNCTION_RETURN_INT(hdl, perfMode, duration);
 }
 
 inline bool releasePerformanceLock(int32_t hdl) {
   LOAD_APUWARE_UTILS_FUNCTION(releasePerformanceLockInternal);
-  EXECUTE_APUWARE_UTILS_FUNCTION_RETURN(hdl);
+  EXECUTE_APUWARE_UTILS_FUNCTION_RETURN_INT(hdl);
+}
+
+inline int32_t acquirePerfParamsLock(int32_t hdl, uint32_t duration,
+                                     int32_t boostList[], uint32_t numParams) {
+  LOAD_APUWARE_UTILS_FUNCTION(acquirePerfParamsLockInternal);
+  EXECUTE_APUWARE_UTILS_FUNCTION_RETURN_INT(hdl, duration, boostList,
+                                            numParams);
+}
+
+inline const uint8_t* queryHwConfig(uint32_t* length) {
+  LOAD_APUWARE_UTILS_FUNCTION(queryHwConfigInternal);
+  EXECUTE_APUWARE_UTILS_FUNCTION_RETURN(length);
 }
 
 #ifdef __cplusplus

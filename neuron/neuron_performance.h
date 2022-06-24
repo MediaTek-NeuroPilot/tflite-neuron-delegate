@@ -20,36 +20,51 @@
  * SOFTWARE.
  */
 
-#include <android/log.h>
-#include <fcntl.h>
-#include <jni.h>
-#include <stdio.h>
-#include <sys/stat.h>
-#include <unistd.h>
+#ifndef TENSORFLOW_LITE_EXPERIMENTAL_DELEGATES_NEURON_NEURON_PERF_H_
+#define TENSORFLOW_LITE_EXPERIMENTAL_DELEGATES_NEURON_NEURON_PERF_H_
+
+#include <chrono>
+#include <cstdlib>
+#include <vector>
 
 #include "neuron/neuron_delegate.h"
 
-#define TAG "NeuronDelegateJni"
+namespace tflite {
+namespace neuron {
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+class PerformanceCompilation {
+ public:
+  static const int kDefaultDuration = 3000;
 
-JNIEXPORT jlong JNICALL Java_org_tensorflow_lite_NeuronDelegate_createDelegate(
-    JNIEnv* env, jclass clazz, jint preference, jboolean allow_fp16) {
+ public:
+  PerformanceCompilation() {}
 
-  auto options = TfLiteNeuronDelegateOptionsDefault();
-  options.execution_preference = (ExecutionPreference)preference;
+  virtual ~PerformanceCompilation();
 
-  options.allow_fp16 = allow_fp16;
-  return reinterpret_cast<jlong>(TfLiteNeuronDelegateCreate(&options));
-}
+  bool AcquirePerfLock();
 
-JNIEXPORT void JNICALL Java_org_tensorflow_lite_NeuronDelegate_deleteDelegate(
-    JNIEnv* env, jclass clazz, jlong delegate) {
-  TfLiteNeuronDelegateDelete(reinterpret_cast<TfLiteDelegate*>(delegate));
-}
+ private:
+  int handle_;
+};
 
-#ifdef __cplusplus
-}  // extern "C"
-#endif  // __cplusplus
+class PerformanceExecution {
+ public:
+  explicit PerformanceExecution(ExecutionPreference preference)
+      : kPreference_(preference) {}
+
+  virtual ~PerformanceExecution();
+
+  bool AcquirePerfLock(uint32_t duration);
+
+ private:
+  int handle_;
+  std::chrono::steady_clock::time_point fireTime_;
+  const ExecutionPreference kPreference_;
+
+  const std::vector<int32_t>& GetParams();
+};
+
+}  // namespace neuron
+}  // namespace tflite
+
+#endif  // TENSORFLOW_LITE_EXPERIMENTAL_DELEGATES_NEURON_NEURON_PERF_H_
