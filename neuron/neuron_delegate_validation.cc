@@ -710,6 +710,13 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
     case kTfLiteBuiltinReverseV2: {
       // Use BuiltinOP as MTK EXT OP
     } break;
+    case kTfLiteBuiltinCustom: {
+      if ((strcmp(registration->custom_name, "TFLite_Detection_PostProcess") ==
+           0) &&
+          (GetPropertyValue("ro.hardware") == "mt6985")) {
+        break;
+      }
+    }  // no break, pass to default
     default:
       // All other operators are not mapped.
       TFLITE_LOG_PROD(tflite::TFLITE_LOG_WARNING,

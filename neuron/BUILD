@@ -52,6 +52,7 @@ cc_library(
     srcs = [
         "mtk/mtk_utils.cc",
         "mtk/mtk_utils.h",
+        "mtk/mtkext_ops.h",
         "neuron_delegate.h",
         "neuron_delegate_builder.h",
         "neuron_delegate_kernel.cc",

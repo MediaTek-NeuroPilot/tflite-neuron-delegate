@@ -21,7 +21,7 @@ tf_workspace2()
 # Android.
 android_sdk_repository(
     name = "androidsdk",
-    api_level = 28,
+    api_level = 31,
 )
 
 android_ndk_repository(

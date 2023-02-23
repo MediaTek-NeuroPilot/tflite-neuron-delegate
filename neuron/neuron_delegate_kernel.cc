@@ -44,6 +44,7 @@
 #include <iostream>
 
 #include "neuron/mtk/mtk_utils.h"
+#include "neuron/mtk/mtkext_ops.h"
 /// M: NeuroPilot @}
 
 namespace tflite {
@@ -960,6 +961,59 @@ TfLiteStatus NeuronDelegateKernel::Map(TfLiteContext* context, int builtin_code,
       }
       mapping_args.builder->GetExtensionOperationType(nn_op_type);
     } break;
+    case kTfLiteBuiltinCustom: {
+      if (strcmp(mapping_args.registration->custom_name,
+                 "TFLite_Detection_PostProcess") == 0) {
+        const char* custom_name = "detectionpostprocessingmtk";
+        size_t oem_scalar_size = 0;
+        uint8_t* oem_scalar = nullptr;
+        mapping_args.builder->AddTensorInput(mapping_args.node->inputs->data[1],
+                                             /* hybrid_op */ false,
+                                             /* scalar_as_tensor */ false);
+        mapping_args.builder->AddTensorInput(mapping_args.node->inputs->data[0],
+                                             /* hybrid_op */ false,
+                                             /* scalar_as_tensor */ false);
+        mapping_args.builder->AddTensorInput(mapping_args.node->inputs->data[2],
+                                             /* hybrid_op */ false,
+                                             /* scalar_as_tensor */ false);
+        auto builtin = reinterpret_cast<
+            ::tflite::ops::mtkext::detection_postprocessing::OpData*>(
+            mapping_args.node->user_data);
+        mapping_args.builder->AddScalarFloat32Operand(builtin->scale_values.y);
+        mapping_args.builder->AddScalarFloat32Operand(builtin->scale_values.x);
+        mapping_args.builder->AddScalarFloat32Operand(builtin->scale_values.h);
+        mapping_args.builder->AddScalarFloat32Operand(builtin->scale_values.w);
+        mapping_args.builder->AddScalarBoolOperand(
+            builtin->use_regular_non_max_suppression);
+        mapping_args.builder->AddScalarInt32Operand(builtin->max_detections);
+        mapping_args.builder->AddScalarInt32Operand(
+            builtin->max_classes_per_detection);
+        mapping_args.builder->AddScalarInt32Operand(
+            builtin->detections_per_class);
+        mapping_args.builder->AddScalarFloat32Operand(
+            builtin->non_max_suppression_score_threshold);
+        mapping_args.builder->AddScalarFloat32Operand(
+            builtin->intersection_over_union_threshold);
+        mapping_args.builder->AddScalarBoolOperand(false);
+        oem_scalar_size =
+            ::tflite::mtk::PackOemScalarString(custom_name, &oem_scalar);
+        if (oem_scalar != nullptr) {
+          mapping_args.builder->AddScalarExtensionOperand(oem_scalar,
+                                                          oem_scalar_size);
+          free(oem_scalar);
+        }
+        mapping_args.builder->GetExtensionOperationType(nn_op_type);
+        mapping_args.builder->AddTensorOutput(
+            mapping_args.node->outputs->data[2]);
+        mapping_args.builder->AddTensorOutput(
+            mapping_args.node->outputs->data[0]);
+        mapping_args.builder->AddTensorOutput(
+            mapping_args.node->outputs->data[1]);
+        mapping_args.builder->AddTensorOutput(
+            mapping_args.node->outputs->data[3]);
+        break;  // needed
+      }
+    }  // no break, pass to default
     default:
       // All other operators are not mapped.
       TFLITE_LOG_PROD(tflite::TFLITE_LOG_INFO, "Unmapped OP: %d", builtin_code);
@@ -1686,6 +1740,12 @@ TfLiteStatus NeuronDelegateKernel::AddOpsAndTensors(TfLiteContext* context) {
               return kTfLiteError;
           }
         }
+      } else if ((reg->builtin_code == kTfLiteBuiltinCustom) &&
+                 (strcmp(reg->custom_name, "TFLite_Detection_PostProcess") ==
+                  0)) {
+        // Everything is added during Map since input tensors
+        // have different order.
+        continue;
       } else {
         TF_LITE_ENSURE_STATUS(
             builder.AddTensorInput(input_index, hybrid_op, input_tensor_flags));
@@ -1702,7 +1762,7 @@ TfLiteStatus NeuronDelegateKernel::AddOpsAndTensors(TfLiteContext* context) {
     TF_LITE_ENSURE_STATUS(Map(context, reg->builtin_code, reg->version,
                               android_sdk_version,
                               {context, &builder, node, &model_state_outputs_,
-                               &model_state_tfl_inputs_, &feedback_loops_},
+                               &model_state_tfl_inputs_, &feedback_loops_, reg},
                               &nn_op_type));
 
     // Map outputs to Neuron tensor indices.
@@ -1737,6 +1797,12 @@ TfLiteStatus NeuronDelegateKernel::AddOpsAndTensors(TfLiteContext* context) {
             output_tensor.type, output_dims.size(), output_dims.data(),
             output_tensor.params.scale, output_tensor.params.zero_point,
             &fc_nn_intermediate_output_index));
+      } else if (reg->builtin_code == kTfLiteBuiltinCustom &&
+                 strcmp(reg->custom_name, "TFLite_Detection_PostProcess") ==
+                     0) {
+        // Everything is added during Map since output tensors
+        // have different order.
+        continue;
       } else {
         TF_LITE_ENSURE_STATUS(
             builder.AddTensorOutput(output_index, output_tensor_flags));

@@ -54,6 +54,9 @@ struct NeuronOpMappingArgs {
   std::vector<int>* model_state_outputs;
   std::vector<int>* model_state_tfl_inputs;
   std::vector<std::tuple<int, int>>* feedback_loops;
+  /// M: NeuroPilot {@
+  TfLiteRegistration* registration;
+  /// M: NeuroPilot @}
   int* neuron_errno;
 };
 
