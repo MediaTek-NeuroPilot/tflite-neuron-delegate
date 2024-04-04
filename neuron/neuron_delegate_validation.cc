@@ -713,7 +713,8 @@ bool Validate(const TfLiteRegistration* registration, const TfLiteNode* node,
     case kTfLiteBuiltinCustom: {
       if ((strcmp(registration->custom_name, "TFLite_Detection_PostProcess") ==
            0) &&
-          (GetPropertyValue("ro.hardware") == "mt6985")) {
+          ((GetPropertyValue("ro.hardware") == "mt6985") ||
+           GetPropertyValue("ro.hardware") == "mt6989")) {
         break;
       }
     }  // no break, pass to default
