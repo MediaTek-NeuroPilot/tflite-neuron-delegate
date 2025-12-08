@@ -1,3 +1,7 @@
+# For newer MediaTek SoCs
+
+To run TFLite / LiteRT models on new MediaTek SoC, please check https://ai.google.dev/edge/litert/next/mediatek 
+
 # tflite-neuron-delegate
 MediaTek's TFLite delegate
 
